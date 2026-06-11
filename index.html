@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rail Frontier</title>
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <span class="brand">🚂 Rail Frontier</span>
+        <span class="stat" id="stat-cash"></span>
+        <span class="stat" id="stat-date"></span>
+        <span class="stat" id="stat-income"></span>
+        <span class="stat" id="stat-expenses"></span>
+        <span class="stat" id="stat-value"></span>
+        <span class="spacer"></span>
+        <button id="btn-pause">⏸ Pause</button>
+        <button class="speed" data-speed="1">1×</button>
+        <button class="speed" data-speed="2">2×</button>
+        <button class="speed" data-speed="4">4×</button>
+      </header>
+      <div id="toolbar">
+        <button data-tool="inspect">🔍 Inspect <kbd>1</kbd></button>
+        <button data-tool="track">🛤 Track <kbd>2</kbd></button>
+        <button data-tool="station">🏛 Station <kbd>3</kbd></button>
+        <button data-tool="train">🚆 Buy Train <kbd>4</kbd></button>
+        <button data-tool="route">🗺 Route <kbd>5</kbd></button>
+        <button data-tool="bulldoze">💥 Bulldoze <kbd>6</kbd></button>
+        <span class="spacer"></span>
+        <button id="btn-save">💾 Save</button>
+        <button id="btn-load">📂 Load</button>
+        <button id="btn-new">✨ New Game</button>
+        <button id="btn-help">❓ Help <kbd>H</kbd></button>
+      </div>
+      <main id="main">
+        <canvas id="canvas"></canvas>
+        <aside id="sidepanel">
+          <div id="panel-context"></div>
+          <h3 class="messages-title">Messages</h3>
+          <div id="messages"></div>
+        </aside>
+      </main>
+      <div id="help-overlay" class="hidden">
+        <div class="help-card">
+          <h2>🚂 Rail Frontier — How to Play</h2>
+          <p>You run a young railway company. Connect towns and industries, move
+          passengers and coal, and grow your cash.</p>
+          <ol>
+            <li><b>Find an opportunity</b> — two towns close together, or a coal
+            mine (⛏ dark triangle) near a power plant (⚡ yellow box).</li>
+            <li><b>Build stations</b> (key <kbd>3</kbd>) next to each — a station
+            serves everything within 3 tiles (shown while placing).</li>
+            <li><b>Lay track</b> (key <kbd>2</kbd>) connecting the stations.
+            Click-drag to paint. Water blocks track; hills are expensive.</li>
+            <li><b>Buy a train</b> (key <kbd>4</kbd>): pick a type, click your
+            stations in order, then <i>Buy &amp; Start</i>.</li>
+            <li>The train loops between its stops, loading passengers/coal and
+            earning money on every delivery. Watch the messages panel.</li>
+          </ol>
+          <p>Pan with right-drag / WASD / arrows. Zoom with the mouse wheel.
+          <kbd>Space</kbd> pauses. <kbd>Esc</kbd> cancels. Save/Load uses your
+          browser's local storage.</p>
+          <p class="hint">Click anywhere to close. Press <kbd>H</kbd> to reopen.</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
