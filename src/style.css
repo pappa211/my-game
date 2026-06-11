@@ -1,0 +1,184 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #12161d;
+  color: #e8e6e0;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#topbar,
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #1b212c;
+  border-bottom: 1px solid #2c3442;
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+.stat {
+  background: #232b38;
+  padding: 3px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.stat.negative {
+  color: #ff7a6e;
+}
+
+.spacer {
+  flex: 1;
+}
+
+button {
+  background: #2a3342;
+  color: #e8e6e0;
+  border: 1px solid #3a4658;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+button:hover {
+  background: #354159;
+}
+
+button.active {
+  background: #3d6fd0;
+  border-color: #6b9aef;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+kbd {
+  background: #1a202b;
+  border: 1px solid #3a4658;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#canvas {
+  display: block;
+  cursor: crosshair;
+}
+
+#sidepanel {
+  width: 290px;
+  flex-shrink: 0;
+  background: #1b212c;
+  border-left: 1px solid #2c3442;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+#sidepanel h3 {
+  margin: 4px 0 8px;
+}
+
+#sidepanel p {
+  margin: 6px 0;
+  line-height: 1.4;
+}
+
+#sidepanel .hint {
+  color: #93a0b4;
+  font-size: 12px;
+}
+
+#panel-context button {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+  text-align: center;
+}
+
+#panel-context button.type {
+  text-align: left;
+}
+
+#panel-context button.type small {
+  color: #aeb9cc;
+}
+
+ol.stops {
+  margin: 6px 0;
+  padding-left: 4px;
+  list-style: none;
+}
+
+.messages-title {
+  border-top: 1px solid #2c3442;
+  padding-top: 10px;
+}
+
+.msg {
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #232b38;
+  line-height: 1.35;
+}
+
+.msg-day {
+  color: #8fa3c2;
+  font-weight: 600;
+  margin-right: 3px;
+}
+
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 11, 16, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  cursor: pointer;
+}
+
+#help-overlay.hidden {
+  display: none;
+}
+
+.help-card {
+  max-width: 620px;
+  background: #1d2430;
+  border: 1px solid #3a4658;
+  border-radius: 8px;
+  padding: 18px 26px;
+  line-height: 1.5;
+}
+
+.help-card .hint {
+  color: #93a0b4;
+}
