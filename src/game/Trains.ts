@@ -1,6 +1,11 @@
-import { LOAD_DAYS, STRANDED_RETRY_DAYS, trainType } from './config';
+import {
+  LOAD_DAYS,
+  STRANDED_RETRY_DAYS,
+  TRAIN_SELL_FACTOR,
+  trainType,
+} from './config';
 import { loadAtStation, unloadAtStation } from './Economy';
-import { addMessage, getStation, spend } from './GameState';
+import { addMessage, earn, getStation, spend } from './GameState';
 import { findPath } from './Pathfinding';
 import { GameState, Train } from './types';
 
@@ -46,6 +51,7 @@ export function buyTrain(state: GameState, typeId: string, stops: number[]): Tra
     state: 'loading',
     loadTimer: LOAD_DAYS,
     cargo: [],
+    earnings: 0,
     x: home.x,
     y: home.y,
   };
@@ -67,6 +73,17 @@ export function assignRoute(state: GameState, trainId: number, stops: number[]):
     train.loadTimer = 0;
   }
   addMessage(state, `${train.name} assigned a new ${stops.length}-stop route.`);
+  return { ok: true, train };
+}
+
+/** Sell a train for a fraction of its purchase price. Cargo is lost. */
+export function sellTrain(state: GameState, trainId: number): TrainResult {
+  const train = state.trains.find((t) => t.id === trainId);
+  if (!train) return { ok: false, reason: 'Train not found.' };
+  const refund = Math.round(trainType(train.typeId).cost * TRAIN_SELL_FACTOR);
+  state.trains = state.trains.filter((t) => t.id !== trainId);
+  earn(state, refund);
+  addMessage(state, `${train.name} sold for $${refund.toLocaleString('en-US')}.`);
   return { ok: true, train };
 }
 
@@ -145,8 +162,23 @@ export function updateTrains(state: GameState, dtDays: number): void {
       continue;
     }
     const type = trainType(train.typeId);
-    train.pathPos += type.speed * dtDays;
+    // Advance by true distance so diagonal segments don't speed the train up.
+    let remaining = type.speed * dtDays;
     const last = train.path.length - 1;
+    while (remaining > 0 && train.pathPos < last) {
+      const i = Math.floor(train.pathPos);
+      const a = train.path[i];
+      const b = train.path[Math.min(i + 1, last)];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const distToNext = (i + 1 - train.pathPos) * segLen;
+      if (remaining >= distToNext) {
+        train.pathPos = i + 1;
+        remaining -= distToNext;
+      } else {
+        train.pathPos += remaining / segLen;
+        remaining = 0;
+      }
+    }
     if (train.pathPos >= last) {
       train.pathPos = last;
       setTrainPos(train);
@@ -155,4 +187,40 @@ export function updateTrains(state: GameState, dtDays: number): void {
       setTrainPos(train);
     }
   }
+}
+
+/**
+ * Position a given true distance behind the train along its current path —
+ * used by the renderer to place wagons. Clamps at the path start.
+ */
+export function positionBehind(train: Train, dist: number): { x: number; y: number; angle: number } {
+  let i = Math.min(Math.floor(train.pathPos), train.path.length - 1);
+  let frac = train.pathPos - i;
+  let left = dist;
+  while (left > 0 && (i > 0 || frac > 0)) {
+    const a = train.path[Math.max(0, i)];
+    const b = train.path[Math.min(i + 1, train.path.length - 1)];
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const avail = frac * segLen;
+    if (left <= avail) {
+      frac -= left / segLen;
+      left = 0;
+    } else {
+      left -= avail;
+      i -= 1;
+      frac = 1;
+      if (i < 0) {
+        i = 0;
+        frac = 0;
+        break;
+      }
+    }
+  }
+  const a = train.path[i];
+  const b = train.path[Math.min(i + 1, train.path.length - 1)];
+  return {
+    x: a.x + (b.x - a.x) * frac,
+    y: a.y + (b.y - a.y) * frac,
+    angle: Math.atan2(b.y - a.y, b.x - a.x),
+  };
 }

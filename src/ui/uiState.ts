@@ -2,6 +2,8 @@ import { Point } from '../game/types';
 
 export type Tool = 'inspect' | 'track' | 'station' | 'train' | 'route' | 'bulldoze';
 
+export type PanelTab = 'info' | 'trains' | 'finance';
+
 export type Selection =
   | { kind: 'tile'; x: number; y: number }
   | { kind: 'station'; id: number }
@@ -26,6 +28,11 @@ export interface UiState {
   speed: number;
   paused: boolean;
   helpVisible: boolean;
+  panelTab: PanelTab;
+  /** camera tracks the selected train */
+  follow: boolean;
+  /** money spent during the current track-paint drag (cost readout) */
+  dragSpent: number;
 }
 
 export function createUiState(): UiState {
@@ -37,5 +44,8 @@ export function createUiState(): UiState {
     speed: 1,
     paused: false,
     helpVisible: true,
+    panelTab: 'info',
+    follow: false,
+    dragSpent: 0,
   };
 }

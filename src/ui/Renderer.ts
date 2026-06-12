@@ -3,18 +3,43 @@ import {
   canBuildStation,
   canBuildTrack,
   getStation,
+  hasTrack,
   isTraversable,
   stationAt,
 } from '../game/GameState';
-import { GameState, Point, Terrain } from '../game/types';
+import { positionBehind } from '../game/Trains';
+import { GameState, Point, Terrain, Train } from '../game/types';
 import { UiState } from './uiState';
 
-const TERRAIN_COLORS: Record<number, [string, string]> = {
-  [Terrain.Grass]: ['#79a85e', '#71a056'],
-  [Terrain.Forest]: ['#4a7a42', '#436f3c'],
-  [Terrain.Hill]: ['#9a8f6a', '#908563'],
-  [Terrain.Water]: ['#3e6f9e', '#3a6896'],
+/** Deterministic per-tile hash in [0,1) for visual variation. */
+function tileHash(x: number, y: number, salt = 0): number {
+  let h = (x * 374761393 + y * 668265263 + salt * 2147483647) | 0;
+  h = (h ^ (h >> 13)) | 0;
+  h = (h * 1274126177) | 0;
+  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+}
+
+const GRASS_SHADES = ['#7aa95f', '#74a259', '#7ead63', '#71a056'];
+const FOREST_SHADES = ['#4d7c45', '#477540', '#52814a', '#43703c'];
+const HILL_SHADES = ['#9d916c', '#968a66', '#a39871', '#908563'];
+const WATER_BASE = '#3a6896';
+const WATER_LIGHT = '#4674a4';
+const SAND = '#c9bd8d';
+
+const WAGON_CARGO_COLORS: Record<string, string> = {
+  passengers: '#e8e3d4',
+  coal: '#2c2c31',
+  wood: '#9a6b3f',
+  goods: '#c9a258',
 };
+
+interface SmokePuff {
+  x: number;
+  y: number;
+  age: number;
+  life: number;
+  drift: number;
+}
 
 export interface Camera {
   /** top-left corner in tile coordinates */
@@ -24,10 +49,20 @@ export interface Camera {
   zoom: number;
 }
 
+const MINIMAP_WIDTH = 190;
+const MINIMAP_MARGIN = 12;
+
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   camera: Camera = { x: 0, y: 0, zoom: 14 };
+
+  private smoke: SmokePuff[] = [];
+  private lastFrame = performance.now();
+  private time = 0;
+
+  private minimapTerrain: HTMLCanvasElement | null = null;
+  private minimapSeed: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -59,10 +94,32 @@ export class Renderer {
     this.camera.y = Math.max(-margin, Math.min(state.map.height - viewH + margin, this.camera.y));
   }
 
+  /** Minimap screen rectangle (bottom-left corner of the canvas). */
+  minimapRect(state: GameState): { x: number; y: number; w: number; h: number } {
+    const w = MINIMAP_WIDTH;
+    const h = Math.round((w * state.map.height) / state.map.width);
+    return { x: MINIMAP_MARGIN, y: this.canvas.height - h - MINIMAP_MARGIN, w, h };
+  }
+
+  /** Convert a screen point inside the minimap to world tile coords, or null. */
+  minimapToWorld(state: GameState, px: number, py: number): Point | null {
+    const r = this.minimapRect(state);
+    if (px < r.x || py < r.y || px > r.x + r.w || py > r.y + r.h) return null;
+    return {
+      x: ((px - r.x) / r.w) * state.map.width,
+      y: ((py - r.y) / r.h) * state.map.height,
+    };
+  }
+
   render(state: GameState, ui: UiState): void {
+    const now = performance.now();
+    const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
+    this.lastFrame = now;
+    this.time += dt;
+
     const { ctx, camera } = this;
     const z = camera.zoom;
-    ctx.fillStyle = '#1c2330';
+    ctx.fillStyle = '#10151d';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     const x0 = Math.max(0, Math.floor(camera.x));
@@ -73,197 +130,608 @@ export class Renderer {
     const sx = (tx: number) => (tx - camera.x) * z;
     const sy = (ty: number) => (ty - camera.y) * z;
 
-    // Terrain
+    this.drawTerrain(state, x0, y0, x1, y1, sx, sy);
+    this.drawTrack(state, x0, y0, x1, y1, sx, sy);
+    this.drawSelectedPath(state, ui, sx, sy);
+    this.drawTowns(state, x0, y0, x1, y1, sx, sy);
+    this.drawIndustries(state, x0, y0, x1, y1, sx, sy);
+    this.drawStations(state, ui, x0, y0, x1, y1, sx, sy);
+    this.drawDraftMarkers(state, ui, sx, sy);
+    this.drawTrains(state, ui, dt, sx, sy);
+    this.drawSmoke(dt, sx, sy);
+    this.drawHover(state, ui, sx, sy);
+    this.drawMinimap(state);
+  }
+
+  // ---------------------------------------------------------------- terrain
+
+  private drawTerrain(
+    state: GameState,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    const W = state.map.width;
+    const terrain = state.map.terrain;
+    // -1 marks out-of-bounds so map borders get neither shoreline nor sand.
+    const at = (x: number, y: number) =>
+      x < 0 || y < 0 || x >= W || y >= state.map.height ? -1 : terrain[y * W + x];
+
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
-        const t = state.map.terrain[y * state.map.width + x];
-        ctx.fillStyle = TERRAIN_COLORS[t][(x * 7 + y * 13) % 2];
-        ctx.fillRect(sx(x), sy(y), z + 1, z + 1);
+        const t = terrain[y * W + x];
+        const h = tileHash(x, y);
+        const px = sx(x);
+        const py = sy(y);
+        if (t === Terrain.Water) {
+          ctx.fillStyle = WATER_BASE;
+          ctx.fillRect(px, py, z + 1, z + 1);
+          // animated shimmer bands
+          const phase = Math.sin(this.time * 1.6 + (x + y * 1.7) * 0.9 + h * 6);
+          if (phase > 0.55) {
+            ctx.fillStyle = WATER_LIGHT;
+            ctx.fillRect(px, py + z * 0.35, z + 1, z * 0.3);
+          }
+          // lighter rim where water meets land
+          const isLand = (t: number) => t !== Terrain.Water && t !== -1;
+          const landN = isLand(at(x, y - 1));
+          const landS = isLand(at(x, y + 1));
+          const landW = isLand(at(x - 1, y));
+          const landE = isLand(at(x + 1, y));
+          if (landN || landS || landW || landE) {
+            ctx.fillStyle = 'rgba(180, 205, 225, 0.35)';
+            const e = Math.max(1, z * 0.14);
+            if (landN) ctx.fillRect(px, py, z + 1, e);
+            if (landS) ctx.fillRect(px, py + z + 1 - e, z + 1, e);
+            if (landW) ctx.fillRect(px, py, e, z + 1);
+            if (landE) ctx.fillRect(px + z + 1 - e, py, e, z + 1);
+          }
+          continue;
+        }
+
+        const shades =
+          t === Terrain.Forest ? FOREST_SHADES : t === Terrain.Hill ? HILL_SHADES : GRASS_SHADES;
+        ctx.fillStyle = shades[Math.floor(h * shades.length)];
+        ctx.fillRect(px, py, z + 1, z + 1);
+
+        // sandy edge against water
+        const waterN = at(x, y - 1) === Terrain.Water;
+        const waterS = at(x, y + 1) === Terrain.Water;
+        const waterW = at(x - 1, y) === Terrain.Water;
+        const waterE = at(x + 1, y) === Terrain.Water;
+        if (waterN || waterS || waterW || waterE) {
+          ctx.fillStyle = SAND;
+          const e = Math.max(1, z * 0.18);
+          if (waterN) ctx.fillRect(px, py, z + 1, e);
+          if (waterS) ctx.fillRect(px, py + z + 1 - e, z + 1, e);
+          if (waterW) ctx.fillRect(px, py, e, z + 1);
+          if (waterE) ctx.fillRect(px + z + 1 - e, py, e, z + 1);
+        }
       }
     }
 
-    // Terrain decorations at high zoom
-    if (z >= 12) {
+    // Decorations on a second pass so they sit above neighboring base tiles.
+    if (z >= 9) {
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
-          const t = state.map.terrain[y * state.map.width + x];
+          const t = terrain[y * W + x];
+          const px = sx(x);
+          const py = sy(y);
           if (t === Terrain.Forest) {
-            ctx.fillStyle = '#335c2e';
-            ctx.beginPath();
-            ctx.arc(sx(x) + z * 0.5, sy(y) + z * 0.45, z * 0.22, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (t === Terrain.Hill) {
-            ctx.strokeStyle = '#7a7050';
-            ctx.lineWidth = Math.max(1, z * 0.08);
-            ctx.beginPath();
-            ctx.moveTo(sx(x) + z * 0.25, sy(y) + z * 0.7);
-            ctx.lineTo(sx(x) + z * 0.5, sy(y) + z * 0.3);
-            ctx.lineTo(sx(x) + z * 0.75, sy(y) + z * 0.7);
-            ctx.stroke();
-          }
-        }
-      }
-    }
-
-    // Track
-    ctx.lineCap = 'round';
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        if (!isTraversable(state, x, y)) continue;
-        const cx = sx(x) + z / 2;
-        const cy = sy(y) + z / 2;
-        const dirs: [number, number][] = [];
-        if (isTraversable(state, x, y - 1)) dirs.push([0, -1]);
-        if (isTraversable(state, x, y + 1)) dirs.push([0, 1]);
-        if (isTraversable(state, x - 1, y)) dirs.push([-1, 0]);
-        if (isTraversable(state, x + 1, y)) dirs.push([1, 0]);
-        ctx.strokeStyle = '#3c3631';
-        ctx.lineWidth = Math.max(2, z * 0.32);
-        if (dirs.length === 0) {
-          ctx.beginPath();
-          ctx.moveTo(cx - z * 0.3, cy);
-          ctx.lineTo(cx + z * 0.3, cy);
-          ctx.stroke();
-        } else {
-          for (const [dx, dy] of dirs) {
-            ctx.beginPath();
-            ctx.moveTo(cx, cy);
-            ctx.lineTo(cx + (dx * z) / 2, cy + (dy * z) / 2);
-            ctx.stroke();
-          }
-        }
-        if (z >= 10) {
-          ctx.strokeStyle = '#cfc8be';
-          ctx.lineWidth = Math.max(1, z * 0.08);
-          if (dirs.length === 0) {
-            ctx.beginPath();
-            ctx.moveTo(cx - z * 0.3, cy);
-            ctx.lineTo(cx + z * 0.3, cy);
-            ctx.stroke();
-          } else {
-            for (const [dx, dy] of dirs) {
+            const n = 2 + Math.floor(tileHash(x, y, 1) * 2);
+            for (let k = 0; k < n; k++) {
+              const ox = 0.2 + tileHash(x, y, 2 + k) * 0.6;
+              const oy = 0.25 + tileHash(x, y, 7 + k) * 0.55;
+              const r = z * (0.13 + tileHash(x, y, 12 + k) * 0.08);
+              // canopy with darker rim
+              ctx.fillStyle = '#2e5429';
               ctx.beginPath();
-              ctx.moveTo(cx, cy);
-              ctx.lineTo(cx + (dx * z) / 2, cy + (dy * z) / 2);
-              ctx.stroke();
+              ctx.arc(px + z * ox, py + z * oy + r * 0.25, r, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.fillStyle = '#3f6f37';
+              ctx.beginPath();
+              ctx.arc(px + z * ox, py + z * oy, r, 0, Math.PI * 2);
+              ctx.fill();
             }
+          } else if (t === Terrain.Hill) {
+            // skip some tiles so ridges don't form a uniform grid
+            if (tileHash(x, y, 4) < 0.3) continue;
+            const ox = 0.5 + (tileHash(x, y, 3) - 0.5) * 0.4;
+            const oy = (tileHash(x, y, 5) - 0.5) * 0.3;
+            const s = 0.22 + tileHash(x, y, 6) * 0.14;
+            ctx.fillStyle = '#857a58';
+            ctx.beginPath();
+            ctx.moveTo(px + z * (ox - s * 1.3), py + z * (0.72 + oy));
+            ctx.lineTo(px + z * ox, py + z * (0.72 + oy - s * 2));
+            ctx.lineTo(px + z * (ox + s * 1.3), py + z * (0.72 + oy));
+            ctx.closePath();
+            ctx.fill();
+            // lit face
+            ctx.fillStyle = '#b0a37c';
+            ctx.beginPath();
+            ctx.moveTo(px + z * ox, py + z * (0.72 + oy - s * 2));
+            ctx.lineTo(px + z * (ox + s * 1.3), py + z * (0.72 + oy));
+            ctx.lineTo(px + z * (ox + s * 0.25), py + z * (0.72 + oy));
+            ctx.closePath();
+            ctx.fill();
           }
         }
       }
     }
+  }
 
-    // Selected train's remaining path
-    if (ui.selected?.kind === 'train') {
-      const selectedId = ui.selected.id;
-      const train = state.trains.find((t) => t.id === selectedId);
-      if (train && train.path.length > 1 && train.state === 'moving') {
-        ctx.strokeStyle = 'rgba(255, 220, 80, 0.55)';
-        ctx.lineWidth = Math.max(2, z * 0.18);
-        ctx.beginPath();
-        for (let i = Math.floor(train.pathPos); i < train.path.length; i++) {
-          const p = train.path[i];
-          const px = sx(p.x) + z / 2;
-          const py = sy(p.y) + z / 2;
-          if (i === Math.floor(train.pathPos)) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
+  // ------------------------------------------------------------------ track
+
+  private drawTrack(
+    state: GameState,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    ctx.lineCap = 'round';
+
+    // Connections: each tile draws a half-segment toward every traversable
+    // 8-neighbor; halves meet, forming continuous lines. Diagonals are
+    // skipped when the same connection already exists via two orthogonals
+    // (keeps junctions visually clean).
+    const dirsAt = (x: number, y: number): [number, number][] => {
+      const out: [number, number][] = [];
+      const trav = (dx: number, dy: number) => isTraversable(state, x + dx, y + dy);
+      for (const [dx, dy] of [
+        [0, -1], [0, 1], [-1, 0], [1, 0],
+      ] as [number, number][]) {
+        if (trav(dx, dy)) out.push([dx, dy]);
+      }
+      for (const [dx, dy] of [
+        [1, 1], [1, -1], [-1, 1], [-1, -1],
+      ] as [number, number][]) {
+        if (trav(dx, dy) && !(trav(dx, 0) && trav(0, dy))) out.push([dx, dy]);
+      }
+      return out;
+    };
+
+    const eachConnected = (
+      fn: (cx: number, cy: number, dirs: [number, number][], x: number, y: number) => void,
+    ) => {
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          if (!isTraversable(state, x, y)) continue;
+          fn(sx(x) + z / 2, sy(y) + z / 2, dirsAt(x, y), x, y);
         }
+      }
+    };
+
+    // Bridge decks under track on water.
+    eachConnected((cx, cy, dirs, x, y) => {
+      if (state.map.terrain[y * state.map.width + x] !== Terrain.Water) return;
+      ctx.strokeStyle = '#6e5436';
+      ctx.lineWidth = Math.max(3, z * 0.6);
+      for (const [dx, dy] of dirs) {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + (dx * z) / 2, cy + (dy * z) / 2);
         ctx.stroke();
       }
-    }
+      if (dirs.length === 0) {
+        ctx.beginPath();
+        ctx.moveTo(cx - z * 0.3, cy);
+        ctx.lineTo(cx + z * 0.3, cy);
+        ctx.stroke();
+      }
+      // pylons
+      ctx.fillStyle = '#54402a';
+      ctx.fillRect(cx - z * 0.32, cy + z * 0.18, z * 0.14, z * 0.22);
+      ctx.fillRect(cx + z * 0.18, cy + z * 0.18, z * 0.14, z * 0.22);
+    });
 
-    // Towns
+    // Ballast / sleeper bed.
+    eachConnected((cx, cy, dirs) => {
+      ctx.strokeStyle = '#4a4138';
+      ctx.lineWidth = Math.max(2, z * 0.34);
+      if (dirs.length === 0) {
+        ctx.beginPath();
+        ctx.moveTo(cx - z * 0.3, cy);
+        ctx.lineTo(cx + z * 0.3, cy);
+        ctx.stroke();
+        return;
+      }
+      for (const [dx, dy] of dirs) {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + (dx * z) / 2, cy + (dy * z) / 2);
+        ctx.stroke();
+      }
+    });
+
+    if (z >= 9) {
+      // Sleepers (ties) perpendicular to each connection.
+      eachConnected((cx, cy, dirs) => {
+        ctx.strokeStyle = '#6b5232';
+        ctx.lineWidth = Math.max(1, z * 0.07);
+        for (const [dx, dy] of dirs) {
+          const len = Math.hypot(dx, dy);
+          const ux = dx / len;
+          const uy = dy / len;
+          // perpendicular
+          const tx = -uy;
+          const ty = ux;
+          const half = (z / 2) * len;
+          for (const f of [0.3, 0.75]) {
+            const mx = cx + ux * half * f;
+            const my = cy + uy * half * f;
+            ctx.beginPath();
+            ctx.moveTo(mx + tx * z * 0.16, my + ty * z * 0.16);
+            ctx.lineTo(mx - tx * z * 0.16, my - ty * z * 0.16);
+            ctx.stroke();
+          }
+        }
+      });
+
+      // Twin rails.
+      eachConnected((cx, cy, dirs) => {
+        ctx.strokeStyle = '#d7d2c8';
+        ctx.lineWidth = Math.max(1, z * 0.055);
+        const draw = (ax: number, ay: number, bx: number, by: number) => {
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+          ctx.stroke();
+        };
+        if (dirs.length === 0) {
+          draw(cx - z * 0.3, cy - z * 0.07, cx + z * 0.3, cy - z * 0.07);
+          draw(cx - z * 0.3, cy + z * 0.07, cx + z * 0.3, cy + z * 0.07);
+          return;
+        }
+        for (const [dx, dy] of dirs) {
+          const len = Math.hypot(dx, dy);
+          const ux = dx / len;
+          const uy = dy / len;
+          const tx = -uy * z * 0.09;
+          const ty = ux * z * 0.09;
+          const ex = cx + (dx * z) / 2;
+          const ey = cy + (dy * z) / 2;
+          draw(cx + tx, cy + ty, ex + tx, ey + ty);
+          draw(cx - tx, cy - ty, ex - tx, ey - ty);
+        }
+      });
+    } else {
+      // Low zoom: a single light line keeps track readable.
+      eachConnected((cx, cy, dirs) => {
+        ctx.strokeStyle = '#cfc8be';
+        ctx.lineWidth = Math.max(1, z * 0.1);
+        for (const [dx, dy] of dirs) {
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + (dx * z) / 2, cy + (dy * z) / 2);
+          ctx.stroke();
+        }
+      });
+    }
+  }
+
+  private drawSelectedPath(
+    state: GameState,
+    ui: UiState,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    if (ui.selected?.kind !== 'train') return;
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    const selectedId = ui.selected.id;
+    const train = state.trains.find((t) => t.id === selectedId);
+    if (!train || train.path.length <= 1 || train.state !== 'moving') return;
+    ctx.strokeStyle = 'rgba(255, 220, 80, 0.6)';
+    ctx.lineWidth = Math.max(2, z * 0.16);
+    ctx.setLineDash([z * 0.45, z * 0.3]);
+    ctx.beginPath();
+    for (let i = Math.floor(train.pathPos); i < train.path.length; i++) {
+      const p = train.path[i];
+      const px = sx(p.x) + z / 2;
+      const py = sy(p.y) + z / 2;
+      if (i === Math.floor(train.pathPos)) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ----------------------------------------------------------------- towns
+
+  private drawTowns(
+    state: GameState,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    const ROOFS = ['#b8412f', '#a8503c', '#8f4836', '#b85a2e'];
     for (const town of state.towns) {
       if (town.x < x0 - 2 || town.x > x1 + 2 || town.y < y0 - 2 || town.y > y1 + 2) continue;
-      const px = sx(town.x);
-      const py = sy(town.y);
-      ctx.fillStyle = '#8a5a3a';
-      ctx.fillRect(px + z * 0.18, py + z * 0.4, z * 0.64, z * 0.5);
-      ctx.fillStyle = '#b8412f';
-      ctx.beginPath();
-      ctx.moveTo(px + z * 0.08, py + z * 0.45);
-      ctx.lineTo(px + z * 0.5, py + z * 0.08);
-      ctx.lineTo(px + z * 0.92, py + z * 0.45);
-      ctx.closePath();
-      ctx.fill();
+      const cx = sx(town.x) + z / 2;
+      const cy = sy(town.y) + z / 2;
+      // building count grows with population; spread evenly around the
+      // center and paint back-to-front so roofs overlap naturally
+      const buildings = 2 + Math.min(8, Math.floor(town.population / 300));
+      const placed = [];
+      for (let k = 0; k < buildings; k++) {
+        const a = ((k + tileHash(town.id, k, 5)) / buildings) * Math.PI * 2;
+        const d = k === 0 ? 0 : (0.6 + tileHash(town.id, k, 6) * 0.6) * z;
+        placed.push({
+          k,
+          bx: cx + Math.cos(a) * d,
+          by: cy + Math.sin(a) * d * 0.75,
+          bw: z * (0.42 + tileHash(town.id, k, 7) * 0.2),
+          bh: z * (0.38 + tileHash(town.id, k, 8) * 0.18),
+        });
+      }
+      placed.sort((p, q) => p.by - q.by);
+      for (const { k, bx, by, bw, bh } of placed) {
+        // wall
+        ctx.fillStyle = '#b09a78';
+        ctx.fillRect(bx - bw / 2, by - bh * 0.15, bw, bh * 0.65);
+        // roof
+        ctx.fillStyle = ROOFS[Math.floor(tileHash(town.id, k, 9) * ROOFS.length)];
+        ctx.beginPath();
+        ctx.moveTo(bx - bw * 0.62, by - bh * 0.12);
+        ctx.lineTo(bx, by - bh * 0.62);
+        ctx.lineTo(bx + bw * 0.62, by - bh * 0.12);
+        ctx.closePath();
+        ctx.fill();
+      }
       if (z >= 9) {
-        this.label(`${town.name} (${town.population})`, px + z / 2, py - 3);
+        this.label(`${town.name} · ${Math.floor(town.population)}`, cx, sy(town.y) - 5);
       }
     }
+  }
 
-    // Industries
+  // ------------------------------------------------------------- industries
+
+  private drawIndustries(
+    state: GameState,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
     for (const ind of state.industries) {
       if (ind.x < x0 - 2 || ind.x > x1 + 2 || ind.y < y0 - 2 || ind.y > y1 + 2) continue;
       const px = sx(ind.x);
       const py = sy(ind.y);
-      if (ind.kind === 'coalMine') {
-        ctx.fillStyle = '#2e2e34';
-        ctx.beginPath();
-        ctx.moveTo(px + z * 0.1, py + z * 0.9);
-        ctx.lineTo(px + z * 0.5, py + z * 0.1);
-        ctx.lineTo(px + z * 0.9, py + z * 0.9);
-        ctx.closePath();
-        ctx.fill();
-        if (z >= 10) {
-          ctx.fillStyle = '#ddd';
-          ctx.font = `bold ${Math.floor(z * 0.45)}px sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.fillText('C', px + z * 0.5, py + z * 0.82);
+      switch (ind.kind) {
+        case 'coalMine': {
+          // spoil heap + headframe
+          ctx.fillStyle = '#3a3a40';
+          ctx.beginPath();
+          ctx.moveTo(px + z * 0.05, py + z * 0.92);
+          ctx.lineTo(px + z * 0.42, py + z * 0.3);
+          ctx.lineTo(px + z * 0.78, py + z * 0.92);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#1d1d22';
+          ctx.lineWidth = Math.max(1, z * 0.09);
+          ctx.beginPath();
+          ctx.moveTo(px + z * 0.62, py + z * 0.92);
+          ctx.lineTo(px + z * 0.78, py + z * 0.25);
+          ctx.lineTo(px + z * 0.94, py + z * 0.92);
+          ctx.stroke();
+          ctx.fillStyle = '#1d1d22';
+          ctx.beginPath();
+          ctx.arc(px + z * 0.78, py + z * 0.25, z * 0.12, 0, Math.PI * 2);
+          ctx.fill();
+          break;
         }
-      } else {
-        ctx.fillStyle = '#caa53d';
-        ctx.fillRect(px + z * 0.12, py + z * 0.2, z * 0.76, z * 0.68);
-        ctx.fillStyle = '#5a4a16';
-        ctx.font = `bold ${Math.floor(z * 0.5)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText('⚡', px + z * 0.5, py + z * 0.72);
+        case 'powerPlant': {
+          ctx.fillStyle = '#8d8d96';
+          ctx.fillRect(px + z * 0.08, py + z * 0.4, z * 0.84, z * 0.5);
+          // cooling tower
+          ctx.fillStyle = '#b9b9c2';
+          ctx.beginPath();
+          ctx.moveTo(px + z * 0.16, py + z * 0.4);
+          ctx.lineTo(px + z * 0.24, py + z * 0.06);
+          ctx.lineTo(px + z * 0.46, py + z * 0.06);
+          ctx.lineTo(px + z * 0.54, py + z * 0.4);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#f4d03f';
+          ctx.font = `bold ${Math.max(7, Math.floor(z * 0.5))}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText('⚡', px + z * 0.7, py + z * 0.82);
+          break;
+        }
+        case 'lumberCamp': {
+          // log pile
+          ctx.fillStyle = '#7c5631';
+          for (let k = 0; k < 3; k++) {
+            ctx.beginPath();
+            ctx.arc(px + z * (0.3 + k * 0.2), py + z * 0.75, z * 0.13, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.fillStyle = '#9a6b3f';
+          ctx.beginPath();
+          ctx.arc(px + z * 0.4, py + z * 0.55, z * 0.13, 0, Math.PI * 2);
+          ctx.arc(px + z * 0.6, py + z * 0.55, z * 0.13, 0, Math.PI * 2);
+          ctx.fill();
+          // axe-in-stump accent
+          ctx.fillStyle = '#3f6f37';
+          ctx.beginPath();
+          ctx.arc(px + z * 0.78, py + z * 0.3, z * 0.16, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'sawmill': {
+          // shed
+          ctx.fillStyle = '#a3744a';
+          ctx.fillRect(px + z * 0.1, py + z * 0.42, z * 0.8, z * 0.46);
+          ctx.fillStyle = '#6e4f2f';
+          ctx.beginPath();
+          ctx.moveTo(px + z * 0.04, py + z * 0.46);
+          ctx.lineTo(px + z * 0.5, py + z * 0.12);
+          ctx.lineTo(px + z * 0.96, py + z * 0.46);
+          ctx.closePath();
+          ctx.fill();
+          // saw blade
+          ctx.strokeStyle = '#d7d2c8';
+          ctx.lineWidth = Math.max(1, z * 0.07);
+          ctx.beginPath();
+          ctx.arc(px + z * 0.5, py + z * 0.66, z * 0.15, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        }
       }
-      if (z >= 11) this.label(ind.name, px + z / 2, py - 3);
+      if (z >= 11) this.label(ind.name, px + z / 2, py - 4);
     }
+  }
 
-    // Stations
+  // --------------------------------------------------------------- stations
+
+  private drawStations(
+    state: GameState,
+    ui: UiState,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
     for (const station of state.stations) {
-      if (station.x < x0 - 2 || station.x > x1 + 2 || station.y < y0 - 2 || station.y > y1 + 2) continue;
+      if (station.x < x0 - 4 || station.x > x1 + 4 || station.y < y0 - 4 || station.y > y1 + 4)
+        continue;
       const px = sx(station.x);
       const py = sy(station.y);
-      ctx.fillStyle = '#2255cc';
-      ctx.fillRect(px + z * 0.1, py + z * 0.1, z * 0.8, z * 0.8);
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = Math.max(1, z * 0.08);
-      ctx.strokeRect(px + z * 0.1, py + z * 0.1, z * 0.8, z * 0.8);
-      if (z >= 9) this.label(station.name, px + z / 2, py - 3, '#bcd2ff');
-      if (
-        ui.selected?.kind === 'station' &&
-        (ui.selected as { id: number }).id === station.id
-      ) {
+      const selected = ui.selected?.kind === 'station' && ui.selected.id === station.id;
+
+      if (selected) {
+        // catchment area
+        const r = STATION_RADIUS;
+        ctx.fillStyle = 'rgba(120, 170, 255, 0.13)';
+        ctx.fillRect(sx(station.x - r), sy(station.y - r), z * (2 * r + 1), z * (2 * r + 1));
+        ctx.strokeStyle = 'rgba(120, 170, 255, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx(station.x - r), sy(station.y - r), z * (2 * r + 1), z * (2 * r + 1));
+      }
+
+      // platform
+      ctx.fillStyle = '#9b9b9b';
+      ctx.fillRect(px + z * 0.02, py + z * 0.55, z * 0.96, z * 0.38);
+      ctx.fillStyle = '#7d7d7d';
+      ctx.fillRect(px + z * 0.02, py + z * 0.55, z * 0.96, z * 0.08);
+      // building
+      ctx.fillStyle = '#d8cdb4';
+      ctx.fillRect(px + z * 0.2, py + z * 0.28, z * 0.6, z * 0.34);
+      ctx.fillStyle = '#3a5f9e';
+      ctx.beginPath();
+      ctx.moveTo(px + z * 0.12, py + z * 0.32);
+      ctx.lineTo(px + z * 0.5, py + z * 0.06);
+      ctx.lineTo(px + z * 0.88, py + z * 0.32);
+      ctx.closePath();
+      ctx.fill();
+      if (selected) {
         ctx.strokeStyle = '#ffdc50';
         ctx.lineWidth = 2;
         ctx.strokeRect(px - 2, py - 2, z + 4, z + 4);
       }
+      if (z >= 9) this.label(station.name, px + z / 2, py - 4, '#cfe0ff');
     }
+  }
 
-    // Draft route stop markers
-    if (ui.draft) {
-      ui.draft.stops.forEach((stopId, i) => {
-        const s = getStation(state, stopId);
-        if (!s) return;
-        const px = sx(s.x) + z / 2;
-        const py = sy(s.y) + z / 2;
-        ctx.fillStyle = '#ffdc50';
+  private drawDraftMarkers(
+    state: GameState,
+    ui: UiState,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    if (!ui.draft) return;
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    ui.draft.stops.forEach((stopId, i) => {
+      const s = getStation(state, stopId);
+      if (!s) return;
+      const px = sx(s.x) + z / 2;
+      const py = sy(s.y) + z / 2;
+      ctx.fillStyle = '#ffdc50';
+      ctx.strokeStyle = '#7a6312';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(px, py - z * 0.95, Math.max(8, z * 0.45), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#222';
+      ctx.font = `bold ${Math.max(10, Math.floor(z * 0.5))}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(i + 1), px, py - z * 0.95 + Math.max(3.5, z * 0.18));
+    });
+  }
+
+  // ----------------------------------------------------------------- trains
+
+  private drawTrains(
+    state: GameState,
+    ui: UiState,
+    dt: number,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
+
+    const drawCar = (
+      x: number,
+      y: number,
+      angle: number,
+      length: number,
+      width: number,
+      fill: string,
+      isEngine: boolean,
+    ) => {
+      const px = sx(x) + z / 2;
+      const py = sy(y) + z / 2;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(angle);
+      // shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(-length / 2 + z * 0.05, -width / 2 + z * 0.06, length, width);
+      ctx.fillStyle = fill;
+      ctx.fillRect(-length / 2, -width / 2, length, width);
+      ctx.strokeStyle = '#15181d';
+      ctx.lineWidth = Math.max(1, z * 0.06);
+      ctx.strokeRect(-length / 2, -width / 2, length, width);
+      if (isEngine) {
+        // cab window + chimney
+        ctx.fillStyle = '#f4f0e6';
+        ctx.fillRect(-length * 0.32, -width * 0.28, length * 0.2, width * 0.56);
+        ctx.fillStyle = '#22262c';
         ctx.beginPath();
-        ctx.arc(px, py - z * 0.9, Math.max(7, z * 0.45), 0, Math.PI * 2);
+        ctx.arc(length * 0.3, 0, width * 0.22, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#222';
-        ctx.font = `bold ${Math.max(9, Math.floor(z * 0.5))}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(String(i + 1), px, py - z * 0.9 + Math.max(3, z * 0.18));
-      });
-    }
+      }
+      ctx.restore();
+    };
 
-    // Trains
     for (const train of state.trains) {
       const type = trainType(train.typeId);
-      const px = sx(train.x) + z / 2;
-      const py = sy(train.y) + z / 2;
       const i = Math.min(Math.floor(train.pathPos), train.path.length - 2);
       let angle = 0;
       if (train.path.length > 1 && i >= 0) {
@@ -271,66 +739,205 @@ export class Renderer {
         const b = train.path[i + 1];
         angle = Math.atan2(b.y - a.y, b.x - a.x);
       }
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(angle);
-      const len = z * 0.95;
-      const wid = z * 0.55;
-      ctx.fillStyle = type.color;
-      ctx.fillRect(-len / 2, -wid / 2, len, wid);
-      ctx.strokeStyle = '#15181d';
-      ctx.lineWidth = Math.max(1, z * 0.07);
-      ctx.strokeRect(-len / 2, -wid / 2, len, wid);
-      ctx.fillStyle = '#f4f0e6';
-      ctx.fillRect(len * 0.12, -wid * 0.28, len * 0.22, wid * 0.56);
-      ctx.restore();
-      if (
-        ui.selected?.kind === 'train' &&
-        (ui.selected as { id: number }).id === train.id
-      ) {
+
+      // wagons first so the engine overlaps them
+      const gap = 0.72;
+      for (let w = type.wagons; w >= 1; w--) {
+        const pos =
+          train.path.length > 1
+            ? positionBehind(train, w * gap)
+            : { x: train.x, y: train.y, angle };
+        const batch = train.cargo[(w - 1) % Math.max(1, train.cargo.length)];
+        const fill =
+          train.cargo.length > 0 && batch
+            ? WAGON_CARGO_COLORS[batch.kind]
+            : '#5a5e66';
+        drawCar(pos.x, pos.y, pos.angle, z * 0.62, z * 0.42, fill, false);
+      }
+      drawCar(train.x, train.y, angle, z * 0.8, z * 0.5, type.color, true);
+
+      // smoke from moving engines
+      if (train.state === 'moving' && z >= 7 && Math.random() < dt * 14) {
+        this.smoke.push({
+          x: train.x + 0.5,
+          y: train.y + 0.35,
+          age: 0,
+          life: 0.9 + Math.random() * 0.6,
+          drift: (Math.random() - 0.5) * 0.4,
+        });
+      }
+
+      const selected = ui.selected?.kind === 'train' && ui.selected.id === train.id;
+      if (selected) {
+        const px = sx(train.x) + z / 2;
+        const py = sy(train.y) + z / 2;
         ctx.strokeStyle = '#ffdc50';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(px, py, z * 0.85, 0, Math.PI * 2);
+        ctx.arc(px, py, z * 0.9, 0, Math.PI * 2);
         ctx.stroke();
       }
-    }
-
-    // Hover overlays
-    if (ui.hover) {
-      const { x, y } = ui.hover;
-      if (x >= 0 && y >= 0 && x < state.map.width && y < state.map.height) {
-        if (ui.tool === 'track' || ui.tool === 'station' || ui.tool === 'bulldoze') {
-          const check =
-            ui.tool === 'track'
-              ? canBuildTrack(state, x, y)
-              : ui.tool === 'station'
-                ? canBuildStation(state, x, y)
-                : { ok: stationAt(state, x, y) !== undefined || isTraversable(state, x, y) };
-          ctx.strokeStyle = check.ok ? 'rgba(120, 255, 120, 0.9)' : 'rgba(255, 90, 90, 0.9)';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(sx(x) + 1, sy(y) + 1, z - 2, z - 2);
-          if (ui.tool === 'station') {
-            const r = STATION_RADIUS;
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-            ctx.fillRect(sx(x - r), sy(y - r), z * (2 * r + 1), z * (2 * r + 1));
-          }
-        } else {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(sx(x) + 1, sy(y) + 1, z - 2, z - 2);
-        }
+      if (train.state === 'stranded') {
+        const px = sx(train.x) + z / 2;
+        const py = sy(train.y) - z * 0.5;
+        this.label('⚠', px, py, '#ffb74d');
       }
     }
   }
 
+  private drawSmoke(dt: number, sx: (t: number) => number, sy: (t: number) => number): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    this.smoke = this.smoke.filter((p) => (p.age += dt) < p.life);
+    if (this.smoke.length > 400) this.smoke.splice(0, this.smoke.length - 400);
+    for (const p of this.smoke) {
+      const t = p.age / p.life;
+      const px = sx(p.x - 0.5 + p.drift * t);
+      const py = sy(p.y - 0.5 - t * 0.9);
+      ctx.fillStyle = `rgba(225, 225, 228, ${0.35 * (1 - t)})`;
+      ctx.beginPath();
+      ctx.arc(px, py, z * (0.1 + t * 0.22), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ------------------------------------------------------------------ hover
+
+  private drawHover(
+    state: GameState,
+    ui: UiState,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    if (!ui.hover) return;
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    const { x, y } = ui.hover;
+    if (x < 0 || y < 0 || x >= state.map.width || y >= state.map.height) return;
+
+    if (ui.tool === 'track' || ui.tool === 'station' || ui.tool === 'bulldoze') {
+      const check =
+        ui.tool === 'track'
+          ? canBuildTrack(state, x, y)
+          : ui.tool === 'station'
+            ? canBuildStation(state, x, y)
+            : { ok: stationAt(state, x, y) !== undefined || hasTrack(state, x, y), cost: 0 };
+      ctx.strokeStyle = check.ok ? 'rgba(120, 255, 120, 0.9)' : 'rgba(255, 90, 90, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx(x) + 1, sy(y) + 1, z - 2, z - 2);
+      if (ui.tool === 'station') {
+        const r = STATION_RADIUS;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.fillRect(sx(x - r), sy(y - r), z * (2 * r + 1), z * (2 * r + 1));
+      }
+      // cost readout next to the cursor
+      if (ui.tool === 'track' && check.ok && check.cost) {
+        const total = ui.dragSpent > 0 ? ` (drag $${ui.dragSpent.toLocaleString('en-US')})` : '';
+        this.label(`$${check.cost}${total}`, sx(x) + z / 2, sy(y) + z + 13, '#ffe9a8');
+      } else if (ui.tool === 'track' && ui.dragSpent > 0) {
+        this.label(`drag $${ui.dragSpent.toLocaleString('en-US')}`, sx(x) + z / 2, sy(y) + z + 13, '#ffe9a8');
+      }
+    } else {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx(x) + 1, sy(y) + 1, z - 2, z - 2);
+    }
+  }
+
+  // ---------------------------------------------------------------- minimap
+
+  private buildMinimapTerrain(state: GameState): HTMLCanvasElement {
+    const c = document.createElement('canvas');
+    c.width = state.map.width;
+    c.height = state.map.height;
+    const mctx = c.getContext('2d')!;
+    const img = mctx.createImageData(c.width, c.height);
+    const COLORS: Record<number, [number, number, number]> = {
+      [Terrain.Grass]: [116, 162, 89],
+      [Terrain.Forest]: [71, 117, 64],
+      [Terrain.Hill]: [150, 138, 102],
+      [Terrain.Water]: [58, 104, 150],
+    };
+    for (let i = 0; i < state.map.terrain.length; i++) {
+      const [r, g, b] = COLORS[state.map.terrain[i]];
+      img.data[i * 4] = r;
+      img.data[i * 4 + 1] = g;
+      img.data[i * 4 + 2] = b;
+      img.data[i * 4 + 3] = 255;
+    }
+    mctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  private drawMinimap(state: GameState): void {
+    const { ctx } = this;
+    if (this.minimapSeed !== state.seed || !this.minimapTerrain) {
+      this.minimapTerrain = this.buildMinimapTerrain(state);
+      this.minimapSeed = state.seed;
+    }
+    const r = this.minimapRect(state);
+    const scaleX = r.w / state.map.width;
+    const scaleY = r.h / state.map.height;
+
+    // frame
+    ctx.fillStyle = 'rgba(12, 16, 22, 0.85)';
+    ctx.fillRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.minimapTerrain, r.x, r.y, r.w, r.h);
+    ctx.imageSmoothingEnabled = true;
+
+    // track
+    ctx.fillStyle = '#2c2620';
+    const W = state.map.width;
+    for (let i = 0; i < state.track.length; i++) {
+      if (state.track[i] !== 1) continue;
+      const tx = i % W;
+      const ty = (i - tx) / W;
+      ctx.fillRect(r.x + tx * scaleX, r.y + ty * scaleY, Math.max(1, scaleX), Math.max(1, scaleY));
+    }
+    // towns / stations / trains
+    for (const t of state.towns) {
+      ctx.fillStyle = '#e0a23c';
+      ctx.fillRect(r.x + t.x * scaleX - 1, r.y + t.y * scaleY - 1, 3, 3);
+    }
+    for (const s of state.stations) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(r.x + s.x * scaleX - 1, r.y + s.y * scaleY - 1, 3, 3);
+    }
+    for (const t of state.trains) {
+      ctx.fillStyle = '#ff5246';
+      ctx.fillRect(r.x + t.x * scaleX - 1, r.y + t.y * scaleY - 1, 3, 3);
+    }
+
+    // viewport rectangle
+    const vw = (this.canvas.width / this.camera.zoom) * scaleX;
+    const vh = (this.canvas.height / this.camera.zoom) * scaleY;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(r.x + this.camera.x * scaleX, r.y + this.camera.y * scaleY, vw, vh);
+
+    ctx.strokeStyle = '#3a4658';
+    ctx.strokeRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
+  }
+
   private label(text: string, cx: number, cy: number, color = '#fff'): void {
     const { ctx } = this;
-    ctx.font = '11px sans-serif';
+    ctx.font = 'bold 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(10, 14, 20, 0.85)';
-    ctx.strokeText(text, cx, cy);
+    const w = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(10, 14, 20, 0.7)';
+    const r = 4;
+    const x = cx - w / 2 - 5;
+    const y = cy - 11;
+    const bw = w + 10;
+    const bh = 15;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + bw, y, x + bw, y + bh, r);
+    ctx.arcTo(x + bw, y + bh, x, y + bh, r);
+    ctx.arcTo(x, y + bh, x, y, r);
+    ctx.arcTo(x, y, x + bw, y, r);
+    ctx.fill();
     ctx.fillStyle = color;
     ctx.fillText(text, cx, cy);
   }

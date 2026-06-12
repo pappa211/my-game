@@ -1,6 +1,14 @@
-import { START_CASH, STATION_COST, STATION_RADIUS, TRACK_COST } from './config';
+import {
+  LOAN_MAX,
+  LOAN_STEP,
+  START_CASH,
+  STATION_COST,
+  STATION_RADIUS,
+  TRACK_COST,
+} from './config';
 import { generateMap } from './MapGenerator';
 import {
+  emptyWaiting,
   GameMap,
   GameState,
   Industry,
@@ -40,12 +48,14 @@ export function createState(
     stations: [],
     trains: [],
     cash: START_CASH,
+    loan: 0,
     day: 0,
     finances: {
       month: { income: 0, expenses: 0 },
       lastMonth: { income: 0, expenses: 0 },
       total: { income: 0, expenses: 0 },
       monthIndex: 0,
+      history: [],
     },
     nextId: maxEntityId + 1,
     messages: [],
@@ -115,7 +125,6 @@ export function spend(state: GameState, amount: number): void {
 export function canBuildTrack(state: GameState, x: number, y: number): ActionResult {
   if (!inBounds(state.map, x, y)) return { ok: false, reason: 'Out of bounds' };
   const terrain = terrainAt(state, x, y);
-  if (terrain === Terrain.Water) return { ok: false, reason: 'Cannot build on water' };
   if (townAt(state, x, y)) return { ok: false, reason: 'Tile occupied by a town' };
   if (industryAt(state, x, y)) return { ok: false, reason: 'Tile occupied by an industry' };
   if (hasTrack(state, x, y)) return { ok: false, reason: 'Track already built here' };
@@ -160,7 +169,7 @@ export function buildStation(state: GameState, x: number, y: number): ActionResu
     x,
     y,
     name: count > 0 ? `${base} #${count + 1}` : base,
-    waiting: { passengers: 0, coal: 0 },
+    waiting: emptyWaiting(),
   };
   state.stations.push(station);
   spend(state, check.cost!);
@@ -184,4 +193,26 @@ export function bulldoze(state: GameState, x: number, y: number): ActionResult {
     return { ok: true, cost: 0 };
   }
   return { ok: false, reason: 'Nothing to bulldoze here' };
+}
+
+export function takeLoan(state: GameState): ActionResult {
+  if (state.loan + LOAN_STEP > LOAN_MAX) {
+    return { ok: false, reason: `Credit limit is $${LOAN_MAX.toLocaleString('en-US')}.` };
+  }
+  state.loan += LOAN_STEP;
+  state.cash += LOAN_STEP;
+  addMessage(state, `Borrowed $${LOAN_STEP.toLocaleString('en-US')} from the bank.`);
+  return { ok: true };
+}
+
+export function repayLoan(state: GameState): ActionResult {
+  if (state.loan <= 0) return { ok: false, reason: 'No outstanding loan.' };
+  const amount = Math.min(LOAN_STEP, state.loan);
+  if (state.cash < amount) {
+    return { ok: false, reason: `Need $${amount.toLocaleString('en-US')} cash to repay.` };
+  }
+  state.loan -= amount;
+  state.cash -= amount;
+  addMessage(state, `Repaid $${amount.toLocaleString('en-US')} of the loan.`);
+  return { ok: true };
 }

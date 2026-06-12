@@ -27,9 +27,12 @@ describe('Pathfinding', () => {
     const path = findPath(state, 2, 2, 6, 6);
     expect(path).not.toBeNull();
     expect(path![path!.length - 1]).toEqual({ x: 6, y: 6 });
-    // every step must be 4-directionally adjacent
+    // every step must be to an adjacent tile (diagonals allowed)
     for (let i = 1; i < path!.length; i++) {
-      const d = Math.abs(path![i].x - path![i - 1].x) + Math.abs(path![i].y - path![i - 1].y);
+      const d = Math.max(
+        Math.abs(path![i].x - path![i - 1].x),
+        Math.abs(path![i].y - path![i - 1].y),
+      );
       expect(d).toBe(1);
     }
   });

@@ -33,6 +33,7 @@ export class InputController {
   private app: AppRefs;
   private panning = false;
   private painting = false;
+  private minimapDrag = false;
   private lastPaint: { x: number; y: number } | null = null;
   private downPos: { x: number; y: number } | null = null;
   private lastMouse: { x: number; y: number } | null = null;
@@ -67,6 +68,7 @@ export class InputController {
       const speed = 600 / cam.zoom; // tiles per second
       cam.x += dx * speed * dtSeconds;
       cam.y += dy * speed * dtSeconds;
+      this.app.ui.follow = false;
       this.app.renderer.clampCamera(this.app.getState());
     }
   }
@@ -80,6 +82,15 @@ export class InputController {
     const pos = this.canvasPos(e);
     this.downPos = pos;
     this.lastMouse = pos;
+    if (e.button === 0 && e.target === this.app.renderer.canvas) {
+      // minimap navigation takes priority over tools
+      const world = this.app.renderer.minimapToWorld(this.app.getState(), pos.x, pos.y);
+      if (world) {
+        this.minimapDrag = true;
+        this.jumpTo(world.x, world.y);
+        return;
+      }
+    }
     if (e.button === 1 || e.button === 2) {
       this.panning = true;
       e.preventDefault();
@@ -90,9 +101,16 @@ export class InputController {
       if (ui.tool === 'track' || ui.tool === 'bulldoze') {
         this.painting = true;
         this.lastPaint = null;
+        ui.dragSpent = 0;
         this.paintAt(pos.x, pos.y);
       }
     }
+  }
+
+  private jumpTo(x: number, y: number): void {
+    this.app.ui.follow = false;
+    this.app.renderer.centerOn(x, y);
+    this.app.renderer.clampCamera(this.app.getState());
   }
 
   private onMouseMove(e: MouseEvent): void {
@@ -100,9 +118,13 @@ export class InputController {
     const { renderer, ui, getState } = this.app;
     ui.hover = renderer.screenToTile(pos.x, pos.y);
 
-    if (this.panning && this.lastMouse) {
+    if (this.minimapDrag) {
+      const world = renderer.minimapToWorld(getState(), pos.x, pos.y);
+      if (world) this.jumpTo(world.x, world.y);
+    } else if (this.panning && this.lastMouse) {
       renderer.camera.x -= (pos.x - this.lastMouse.x) / renderer.camera.zoom;
       renderer.camera.y -= (pos.y - this.lastMouse.y) / renderer.camera.zoom;
+      ui.follow = false;
       renderer.clampCamera(getState());
     } else if (this.painting) {
       this.paintAt(pos.x, pos.y);
@@ -117,9 +139,15 @@ export class InputController {
       return;
     }
     if (e.button !== 0) return;
+    if (this.minimapDrag) {
+      this.minimapDrag = false;
+      this.downPos = null;
+      return;
+    }
     const wasPainting = this.painting;
     this.painting = false;
     this.lastPaint = null;
+    this.app.ui.dragSpent = 0;
     if (wasPainting) return;
     if (!this.downPos) return;
     const moved = Math.hypot(pos.x - this.downPos.x, pos.y - this.downPos.y);
@@ -136,7 +164,7 @@ export class InputController {
     const pos = this.canvasPos(e);
     const before = renderer.screenToTile(pos.x, pos.y);
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    cam.zoom = Math.max(5, Math.min(28, cam.zoom * factor));
+    cam.zoom = Math.max(5, Math.min(34, cam.zoom * factor));
     // keep the tile under the cursor fixed
     cam.x = before.x + 0.5 - pos.x / cam.zoom;
     cam.y = before.y + 0.5 - pos.y / cam.zoom;
@@ -159,9 +187,12 @@ export class InputController {
       e.preventDefault();
     } else if (key === 'h') {
       ui.helpVisible = !ui.helpVisible;
+    } else if (key === 'f') {
+      if (ui.selected?.kind === 'train') ui.follow = !ui.follow;
     } else if (key === 'escape') {
       ui.draft = null;
       ui.selected = null;
+      ui.follow = false;
       ui.helpVisible = false;
     }
   }
@@ -185,7 +216,9 @@ export class InputController {
     const state = getState();
     if (ui.tool === 'track') {
       const result = buildTrack(state, tile.x, tile.y);
-      if (!result.ok && result.reason?.startsWith('Not enough cash')) {
+      if (result.ok) {
+        ui.dragSpent += result.cost ?? 0;
+      } else if (result.reason?.startsWith('Not enough cash')) {
         addMessage(state, result.reason);
         this.painting = false;
       }
@@ -222,6 +255,7 @@ export class InputController {
 
     switch (ui.tool) {
       case 'inspect': {
+        ui.panelTab = 'info';
         const train = this.findTrainNear(state, tile.x, tile.y);
         if (train) {
           ui.selected = { kind: 'train', id: train.id };

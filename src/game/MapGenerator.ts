@@ -8,6 +8,8 @@ const TOWN_TARGET = 18;
 const TOWN_MIN = 15;
 const MINES = 4;
 const PLANTS = 4;
+const LUMBER_CAMPS = 3;
+const SAWMILLS = 3;
 
 const NAME_PREFIX = [
   'Ash', 'Brook', 'Clay', 'Dun', 'Elder', 'Fair', 'Glen', 'Haver', 'Iron',
@@ -212,6 +214,48 @@ export function generateMap(seed: number): GeneratedWorld {
       placeIndustry(x, y, 'powerPlant', `${makeName()} Power Co.`);
       plants++;
     }
+  }
+
+  // Wood chain: lumber camps prefer forest, each sawmill sits within reach of
+  // a camp (and ideally near a town for the onward goods run).
+  let camps = 0;
+  let woodAttempts = 0;
+  while (camps < LUMBER_CAMPS && woodAttempts < 6000) {
+    woodAttempts++;
+    const x = 2 + Math.floor(rand() * (w - 4));
+    const y = 2 + Math.floor(rand() * (h - 4));
+    if (!canHost(x, y)) continue;
+    if (terrain[idx(x, y)] !== Terrain.Forest && woodAttempts < 4000) continue;
+    placeIndustry(x, y, 'lumberCamp', `${makeName()} Lumber Camp`);
+    camps++;
+  }
+  // Fallback so the chain always exists.
+  while (camps < 1) {
+    const x = 2 + Math.floor(rand() * (w - 4));
+    const y = 2 + Math.floor(rand() * (h - 4));
+    if (!canHost(x, y)) continue;
+    placeIndustry(x, y, 'lumberCamp', `${makeName()} Lumber Camp`);
+    camps++;
+  }
+  const campList = industries.filter((i) => i.kind === 'lumberCamp');
+  let sawmills = 0;
+  let millAttempts = 0;
+  while (sawmills < SAWMILLS && millAttempts < 6000) {
+    millAttempts++;
+    const camp = campList[sawmills % campList.length];
+    const angle = rand() * Math.PI * 2;
+    const dist = 8 + rand() * 14;
+    const x = Math.round(camp.x + Math.cos(angle) * dist);
+    const y = Math.round(camp.y + Math.sin(angle) * dist);
+    if (!canHost(x, y)) continue;
+    placeIndustry(x, y, 'sawmill', `${makeName()} Sawmill`);
+    sawmills++;
+  }
+  if (sawmills === 0) {
+    const camp = campList[0];
+    const x = Math.max(2, Math.min(w - 3, camp.x + 9));
+    const y = Math.max(2, Math.min(h - 3, camp.y));
+    placeIndustry(x, y, 'sawmill', `${makeName()} Sawmill`);
   }
 
   return { map, towns, industries };

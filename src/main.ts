@@ -1,11 +1,13 @@
 import { DAY_SECONDS } from './game/config';
-import { addMessage, newGame } from './game/GameState';
+import { addMessage, newGame, repayLoan, takeLoan } from './game/GameState';
 import { update } from './game/Simulation';
 import { GameState } from './game/types';
-import { assignRoute, buyTrain } from './game/Trains';
+import { assignRoute, buyTrain, sellTrain } from './game/Trains';
 import { hashSeed } from './game/rng';
 import {
+  autosaveToLocalStorage,
   loadFromLocalStorage,
+  loadNewestFromLocalStorage,
   saveToLocalStorage,
 } from './persistence/SaveLoad';
 import { HUD } from './ui/HUD';
@@ -18,7 +20,7 @@ const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
 const ui = createUiState();
 
-let state: GameState = loadFromLocalStorage() ?? newGame(Date.now() >>> 0);
+let state: GameState = loadNewestFromLocalStorage() ?? newGame(Date.now() >>> 0);
 const getState = () => state;
 
 function centerOnStart(): void {
@@ -37,6 +39,7 @@ const hud = new HUD(getState, ui, {
     state = newGame(seed);
     ui.selected = null;
     ui.draft = null;
+    ui.follow = false;
     centerOnStart();
   },
   save: () => {
@@ -49,6 +52,7 @@ const hud = new HUD(getState, ui, {
       state = loaded;
       ui.selected = null;
       ui.draft = null;
+      ui.follow = false;
       addMessage(state, 'Game loaded.');
     } else {
       addMessage(state, 'No saved game found.');
@@ -94,6 +98,30 @@ const hud = new HUD(getState, ui, {
   toggleHelp: () => {
     ui.helpVisible = !ui.helpVisible;
   },
+  selectTrain: (id) => {
+    ui.selected = { kind: 'train', id };
+    ui.panelTab = 'info';
+    ui.follow = true;
+  },
+  toggleFollow: () => {
+    ui.follow = !ui.follow;
+  },
+  sellTrain: (id) => {
+    const result = sellTrain(state, id);
+    if (!result.ok && result.reason) addMessage(state, result.reason);
+    if (result.ok && ui.selected?.kind === 'train' && ui.selected.id === id) {
+      ui.selected = null;
+      ui.follow = false;
+    }
+  },
+  takeLoan: () => {
+    const result = takeLoan(state);
+    if (!result.ok && result.reason) addMessage(state, result.reason);
+  },
+  repayLoan: () => {
+    const result = repayLoan(state);
+    if (!result.ok && result.reason) addMessage(state, result.reason);
+  },
 });
 
 function fitCanvas(): void {
@@ -107,6 +135,26 @@ window.addEventListener('resize', fitCanvas);
 fitCanvas();
 centerOnStart();
 
+// Console/debug access (used by automated smoke tests).
+if (import.meta.env.DEV) {
+  void import('./game/GameState').then((gs) =>
+    import('./game/Trains').then((tr) => {
+      (window as unknown as Record<string, unknown>).__rail = {
+        getState,
+        ui,
+        renderer,
+        buildTrack: gs.buildTrack,
+        buildStation: gs.buildStation,
+        buyTrain: tr.buyTrain,
+      };
+    }),
+  );
+}
+
+// Autosave so a closed tab never loses more than a couple of minutes.
+const AUTOSAVE_SECONDS = 120;
+let autosaveTimer = 0;
+
 let last = performance.now();
 function frame(now: number): void {
   const dtSeconds = Math.min((now - last) / 1000, 0.1);
@@ -114,6 +162,17 @@ function frame(now: number): void {
   input.tick(dtSeconds);
   if (!ui.paused) {
     update(state, (dtSeconds / DAY_SECONDS) * ui.speed);
+    autosaveTimer += dtSeconds;
+    if (autosaveTimer >= AUTOSAVE_SECONDS) {
+      autosaveTimer = 0;
+      autosaveToLocalStorage(state);
+    }
+  }
+  if (ui.follow && ui.selected?.kind === 'train') {
+    const followId = ui.selected.id;
+    const train = state.trains.find((t) => t.id === followId);
+    if (train) renderer.centerOn(train.x, train.y);
+    else ui.follow = false;
   }
   renderer.render(state, ui);
   hud.update();
