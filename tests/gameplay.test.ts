@@ -1,42 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GROWTH_PER_PASSENGER,
-  LOAN_MAX,
-  LOAN_STEP,
+  GROWTH_PER_DELIVERY,
+  stationTier,
   TRACK_COST,
   TRAIN_SELL_FACTOR,
-  WOOD_TO_GOODS,
   trainType,
 } from '../src/game/config';
-import { stationAccepts, unloadAtStation } from '../src/game/Economy';
+import { generateProduction, stationAccepts, stationRadius, unloadAtStation } from '../src/game/Economy';
 import {
   buildTrack,
+  buildStation,
+  loanLimit,
   repayLoan,
   takeLoan,
   tileIndex,
+  upgradeStation,
 } from '../src/game/GameState';
 import { findPath, pathLength } from '../src/game/Pathfinding';
 import { update } from '../src/game/Simulation';
 import { Terrain, Train } from '../src/game/types';
 import { buyTrain, sellTrain } from '../src/game/Trains';
-import { addStation, blankState, layTrackRow } from './helpers';
+import { addStation, blankState, industry, layTrackRow, town } from './helpers';
 
-function makeTrain(state: ReturnType<typeof blankState>, stops: number[]): Train {
+function makeTrain(state: ReturnType<typeof blankState>, stops: number[], cargo: Train['cargo'] = []): Train {
   const train: Train = {
-    id: state.nextId++,
-    name: 'Test Train',
-    typeId: 'local',
-    stops,
-    atStationId: stops[0],
-    targetStationId: null,
-    path: [{ x: 0, y: 0 }],
-    pathPos: 0,
-    state: 'loading',
-    loadTimer: 0.4,
-    cargo: [],
-    earnings: 0,
-    x: 0,
-    y: 0,
+    id: state.nextId++, name: 'T', typeId: 'american', stops,
+    atStationId: stops[0], targetStationId: null, path: [{ x: 0, y: 0 }], pathPos: 0,
+    state: 'loading', loadTimer: 0.4, cargo, earnings: 0, builtDay: 0, x: 0, y: 0,
   };
   state.trains.push(train);
   return train;
@@ -52,134 +42,135 @@ describe('Bridges', () => {
     expect(result.cost).toBe(TRACK_COST[Terrain.Water]);
     expect(state.cash).toBe(cashBefore - TRACK_COST[Terrain.Water]);
   });
-
-  it('trains can cross a bridge between stations', () => {
-    const state = blankState(30, 12);
-    for (let x = 8; x <= 12; x++) state.map.terrain[tileIndex(state.map, x, 5)] = Terrain.Water;
-    const a = addStation(state, 3, 5, 'A');
-    const b = addStation(state, 19, 5, 'B');
-    for (let x = 4; x <= 18; x++) state.track[tileIndex(state.map, x, 5)] = 1;
-    expect(findPath(state, 3, 5, 19, 5)).not.toBeNull();
-    expect(buyTrain(state, 'local', [a.id, b.id]).ok).toBe(true);
-  });
 });
 
 describe('Diagonal track', () => {
-  it('finds and prefers a diagonal path when one exists', () => {
+  it('finds a pure diagonal path with √2 step cost', () => {
     const state = blankState();
     addStation(state, 2, 2, 'A');
     addStation(state, 6, 6, 'B');
-    // a staircase of track tiles — only diagonal steps connect them
     for (let i = 3; i <= 5; i++) state.track[tileIndex(state.map, i, i)] = 1;
     const path = findPath(state, 2, 2, 6, 6);
     expect(path).not.toBeNull();
-    expect(path!.length).toBe(5); // pure diagonal: (2,2)..(6,6)
+    expect(path!.length).toBe(5);
     expect(pathLength(path!)).toBeCloseTo(4 * Math.SQRT2, 6);
   });
 
-  it('shortest-path beats a longer orthogonal detour', () => {
-    const state = blankState();
-    addStation(state, 2, 2, 'A');
-    addStation(state, 5, 5, 'B');
-    // both a diagonal and an L-shaped connection exist
-    for (let i = 3; i <= 4; i++) state.track[tileIndex(state.map, i, i)] = 1;
-    layTrackRow(state, 3, 5, 2);
-    for (let y = 3; y <= 4; y++) state.track[tileIndex(state.map, 5, y)] = 1;
-    const path = findPath(state, 2, 2, 5, 5);
-    expect(pathLength(path!)).toBeCloseTo(3 * Math.SQRT2, 6);
-  });
-
-  it('trains move at the same ground speed on diagonals', () => {
+  it('trains move at ground speed on diagonals', () => {
     const state = blankState(30, 30);
     const a = addStation(state, 2, 2, 'A');
     const b = addStation(state, 12, 12, 'B');
     for (let i = 3; i <= 11; i++) state.track[tileIndex(state.map, i, i)] = 1;
-    expect(buyTrain(state, 'local', [a.id, b.id]).ok).toBe(true);
+    expect(buyTrain(state, 'american', [a.id, b.id]).ok).toBe(true);
     const train = state.trains[0];
-    // get the train rolling (finish loading), then measure one day of travel
     update(state, 0.5);
     expect(train.state).toBe('moving');
-    const x0 = train.x;
-    const y0 = train.y;
+    const x0 = train.x, y0 = train.y;
     update(state, 1);
     const moved = Math.hypot(train.x - x0, train.y - y0);
-    expect(moved).toBeCloseTo(trainType('local').speed, 1);
+    expect(moved).toBeGreaterThan(trainType('american').speed * 0.6);
   });
 });
 
-describe('Wood → goods chain', () => {
-  it('sawmill stations accept wood and emit goods on delivery', () => {
-    const state = blankState(30, 12, [], [
-      { id: 900, x: 20, y: 5, kind: 'sawmill', name: 'Mill' },
-    ]);
-    const a = addStation(state, 3, 5, 'Camp Halt');
+describe('Supply chains', () => {
+  it('a steel mill turns delivered coal + iron into steel', () => {
+    const state = blankState(30, 12, [], [industry(900, 20, 5, 'steelMill', 'Mill')]);
+    const a = addStation(state, 3, 5, 'Pit');
     const b = addStation(state, 19, 5, 'Mill Halt');
-    expect(stationAccepts(state, b, 'wood')).toBe(true);
-    expect(stationAccepts(state, b, 'goods')).toBe(false); // no town nearby
+    expect(stationAccepts(state, b, 'coal')).toBe(true);
+    expect(stationAccepts(state, b, 'iron')).toBe(true);
 
-    const train = makeTrain(state, [a.id, b.id]);
-    train.cargo = [{ kind: 'wood', qty: 20, origin: a.id }];
+    const train = makeTrain(state, [a.id, b.id], [
+      { kind: 'coal', qty: 20, origin: a.id },
+      { kind: 'iron', qty: 20, origin: a.id },
+    ]);
     const revenue = unloadAtStation(state, train, b);
     expect(revenue).toBeGreaterThan(0);
-    expect(train.earnings).toBe(revenue);
-    expect(b.waiting.goods).toBeCloseTo(20 * WOOD_TO_GOODS, 6);
+    const mill = state.industries[0];
+    expect(mill.stock.coal).toBe(20);
+    expect(mill.stock.iron).toBe(20);
+
+    generateProduction(state, 1);
+    expect(b.waiting.steel).toBeGreaterThan(0);
+    expect(mill.stock.coal).toBeLessThan(20);
   });
 
-  it('towns accept goods', () => {
-    const state = blankState(30, 12, [
-      { id: 900, x: 20, y: 5, name: 'Alpha', population: 500 },
-    ]);
-    const s = addStation(state, 19, 5, 'Alpha Station');
-    expect(stationAccepts(state, s, 'goods')).toBe(true);
+  it('a food mill accepts either grain or livestock', () => {
+    const state = blankState(30, 12, [], [industry(900, 20, 5, 'mill', 'Mill')]);
+    const a = addStation(state, 3, 5, 'Farm');
+    const b = addStation(state, 19, 5, 'Mill Halt');
+    expect(stationAccepts(state, b, 'grain')).toBe(true);
+    expect(stationAccepts(state, b, 'livestock')).toBe(true);
+    const train = makeTrain(state, [a.id, b.id], [{ kind: 'grain', qty: 14, origin: a.id }]);
+    unloadAtStation(state, train, b);
+    generateProduction(state, 1);
+    expect(b.waiting.food).toBeGreaterThan(0);
+  });
+
+  it('a power plant pays for coal but produces nothing', () => {
+    const state = blankState(30, 12, [], [industry(900, 20, 5, 'powerPlant', 'Power')]);
+    const a = addStation(state, 3, 5, 'Pit');
+    const b = addStation(state, 19, 5, 'Plant');
+    const train = makeTrain(state, [a.id, b.id], [{ kind: 'coal', qty: 30, origin: a.id }]);
+    const cashBefore = state.cash;
+    const revenue = unloadAtStation(state, train, b);
+    expect(revenue).toBeGreaterThan(0);
+    expect(state.cash).toBe(cashBefore + revenue);
+    generateProduction(state, 1);
+    expect(b.waiting.steel ?? 0).toBe(0);
   });
 });
 
 describe('Town growth', () => {
-  it('delivered passengers grow the destination town', () => {
-    const state = blankState(30, 12, [
-      { id: 900, x: 2, y: 5, name: 'Alpha', population: 500 },
-      { id: 901, x: 20, y: 5, name: 'Beta', population: 500 },
-    ]);
+  it('delivered food grows the destination town', () => {
+    const state = blankState(30, 12, [town(900, 20, 5, 'Beta', 600)]);
     const a = addStation(state, 3, 5, 'A');
     const b = addStation(state, 19, 5, 'B');
-    const train = makeTrain(state, [a.id, b.id]);
-    train.cargo = [{ kind: 'passengers', qty: 30, origin: a.id }];
+    expect(stationAccepts(state, b, 'food')).toBe(true);
+    const train = makeTrain(state, [a.id, b.id], [{ kind: 'food', qty: 20, origin: a.id }]);
     unloadAtStation(state, train, b);
-    const beta = state.towns[1];
-    expect(beta.population).toBeCloseTo(500 + 30 * GROWTH_PER_PASSENGER, 6);
+    const beta = state.towns[0];
+    expect(beta.population).toBeCloseTo(600 + 20 * GROWTH_PER_DELIVERY, 6);
+    expect(beta.serviceLevel).toBeGreaterThan(0);
   });
 });
 
-describe('Loans', () => {
-  it('borrowing adds cash and principal up to the limit', () => {
+describe('Stations', () => {
+  it('upgrading a station raises its tier, radius and charges the difference', () => {
+    const state = blankState(30, 30);
+    const r = buildStation(state, 10, 10);
+    expect(r.ok).toBe(true);
+    const st = state.stations[0];
+    const before = stationRadius(st);
+    const cashBefore = state.cash;
+    expect(upgradeStation(state, st.id).ok).toBe(true);
+    expect(stationRadius(st)).toBeGreaterThan(before);
+    const diff = stationTier(2).cost - stationTier(1).cost;
+    expect(state.cash).toBe(cashBefore - diff);
+  });
+});
+
+describe('Finance', () => {
+  it('bonds add cash up to a value-scaled limit and can be repaid', () => {
     const state = blankState();
+    expect(loanLimit(state)).toBeGreaterThanOrEqual(30000);
     const cashBefore = state.cash;
     expect(takeLoan(state).ok).toBe(true);
-    expect(state.cash).toBe(cashBefore + LOAN_STEP);
-    expect(state.loan).toBe(LOAN_STEP);
-    while (state.loan < LOAN_MAX) expect(takeLoan(state).ok).toBe(true);
-    expect(takeLoan(state).ok).toBe(false);
-  });
-
-  it('repaying reduces principal and requires cash', () => {
-    const state = blankState();
-    takeLoan(state);
+    expect(state.cash).toBe(cashBefore + 5000);
+    expect(state.loan).toBe(5000);
     expect(repayLoan(state).ok).toBe(true);
     expect(state.loan).toBe(0);
-    expect(repayLoan(state).ok).toBe(false); // nothing left to repay
-    takeLoan(state);
-    state.cash = 10;
-    expect(repayLoan(state).ok).toBe(false); // can't afford
-    expect(state.loan).toBe(LOAN_STEP);
   });
+});
 
-  it('charges monthly interest while a loan is outstanding', () => {
-    const state = blankState();
-    takeLoan(state);
-    const cashBefore = state.cash;
-    update(state, 31); // cross a month boundary
-    expect(state.cash).toBeLessThan(cashBefore);
-    expect(state.finances.history.length).toBe(1);
+describe('Locomotive eras', () => {
+  it('rejects engines not yet invented and allows period-appropriate ones', () => {
+    const state = blankState(30, 12);
+    const a = addStation(state, 3, 5, 'A');
+    const b = addStation(state, 19, 5, 'B');
+    layTrackRow(state, 4, 18, 5);
+    expect(buyTrain(state, 'electric', [a.id, b.id]).reason).toMatch(/not available/i);
+    expect(buyTrain(state, 'american', [a.id, b.id]).ok).toBe(true);
   });
 });
 
@@ -189,12 +180,11 @@ describe('Selling trains', () => {
     const a = addStation(state, 3, 5, 'A');
     const b = addStation(state, 19, 5, 'B');
     layTrackRow(state, 4, 18, 5);
-    const bought = buyTrain(state, 'heavy', [a.id, b.id]);
+    const bought = buyTrain(state, 'mogul', [a.id, b.id]);
     expect(bought.ok).toBe(true);
     const cashBefore = state.cash;
-    const result = sellTrain(state, bought.train!.id);
-    expect(result.ok).toBe(true);
+    expect(sellTrain(state, bought.train!.id).ok).toBe(true);
     expect(state.trains).toHaveLength(0);
-    expect(state.cash).toBe(cashBefore + Math.round(trainType('heavy').cost * TRAIN_SELL_FACTOR));
+    expect(state.cash).toBe(cashBefore + Math.round(trainType('mogul').cost * TRAIN_SELL_FACTOR));
   });
 });

@@ -1,4 +1,6 @@
-import { STATION_RADIUS, trainType } from '../game/config';
+import { CARGO_BY_ID } from '../game/cargo';
+import { stationTier, trainType } from '../game/config';
+import { stationRadius } from '../game/Economy';
 import {
   canBuildStation,
   canBuildTrack,
@@ -7,9 +9,30 @@ import {
   isTraversable,
   stationAt,
 } from '../game/GameState';
+import { industryDef } from '../game/industries';
 import { positionBehind } from '../game/Trains';
-import { GameState, Point, Terrain, Train } from '../game/types';
+import { GameState, Industry, Point, Terrain, Train } from '../game/types';
 import { UiState } from './uiState';
+
+function wagonColor(kind: string): string {
+  return CARGO_BY_ID[kind]?.color ?? '#5a5e66';
+}
+
+/** Soft building tint per industry category, for the sprite base. */
+const INDUSTRY_TINT: Record<string, string> = {
+  coalMine: '#3a3a40',
+  ironMine: '#6a5444',
+  oilWell: '#2b2b33',
+  lumberCamp: '#6e4f2f',
+  farm: '#caa84a',
+  ranch: '#b07a4a',
+  steelMill: '#7a818a',
+  factory: '#8a7d5a',
+  sawmill: '#a3744a',
+  mill: '#c08a4a',
+  powerPlant: '#8d8d96',
+  port: '#4a7a9a',
+};
 
 /** Deterministic per-tile hash in [0,1) for visual variation. */
 function tileHash(x: number, y: number, salt = 0): number {
@@ -25,13 +48,6 @@ const HILL_SHADES = ['#9d916c', '#968a66', '#a39871', '#908563'];
 const WATER_BASE = '#3a6896';
 const WATER_LIGHT = '#4674a4';
 const SAND = '#c9bd8d';
-
-const WAGON_CARGO_COLORS: Record<string, string> = {
-  passengers: '#e8e3d4',
-  coal: '#2c2c31',
-  wood: '#9a6b3f',
-  goods: '#c9a258',
-};
 
 interface SmokePuff {
   x: number;
@@ -132,6 +148,7 @@ export class Renderer {
 
     this.drawTerrain(state, x0, y0, x1, y1, sx, sy);
     this.drawTrack(state, x0, y0, x1, y1, sx, sy);
+    this.drawRivalLinks(state, sx, sy);
     this.drawSelectedPath(state, ui, sx, sy);
     this.drawTowns(state, x0, y0, x1, y1, sx, sy);
     this.drawIndustries(state, x0, y0, x1, y1, sx, sy);
@@ -514,91 +531,78 @@ export class Renderer {
     const z = this.camera.zoom;
     for (const ind of state.industries) {
       if (ind.x < x0 - 2 || ind.x > x1 + 2 || ind.y < y0 - 2 || ind.y > y1 + 2) continue;
-      const px = sx(ind.x);
-      const py = sy(ind.y);
-      switch (ind.kind) {
-        case 'coalMine': {
-          // spoil heap + headframe
-          ctx.fillStyle = '#3a3a40';
-          ctx.beginPath();
-          ctx.moveTo(px + z * 0.05, py + z * 0.92);
-          ctx.lineTo(px + z * 0.42, py + z * 0.3);
-          ctx.lineTo(px + z * 0.78, py + z * 0.92);
-          ctx.closePath();
-          ctx.fill();
-          ctx.strokeStyle = '#1d1d22';
-          ctx.lineWidth = Math.max(1, z * 0.09);
-          ctx.beginPath();
-          ctx.moveTo(px + z * 0.62, py + z * 0.92);
-          ctx.lineTo(px + z * 0.78, py + z * 0.25);
-          ctx.lineTo(px + z * 0.94, py + z * 0.92);
-          ctx.stroke();
-          ctx.fillStyle = '#1d1d22';
-          ctx.beginPath();
-          ctx.arc(px + z * 0.78, py + z * 0.25, z * 0.12, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-        }
-        case 'powerPlant': {
-          ctx.fillStyle = '#8d8d96';
-          ctx.fillRect(px + z * 0.08, py + z * 0.4, z * 0.84, z * 0.5);
-          // cooling tower
-          ctx.fillStyle = '#b9b9c2';
-          ctx.beginPath();
-          ctx.moveTo(px + z * 0.16, py + z * 0.4);
-          ctx.lineTo(px + z * 0.24, py + z * 0.06);
-          ctx.lineTo(px + z * 0.46, py + z * 0.06);
-          ctx.lineTo(px + z * 0.54, py + z * 0.4);
-          ctx.closePath();
-          ctx.fill();
-          ctx.fillStyle = '#f4d03f';
-          ctx.font = `bold ${Math.max(7, Math.floor(z * 0.5))}px sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.fillText('⚡', px + z * 0.7, py + z * 0.82);
-          break;
-        }
-        case 'lumberCamp': {
-          // log pile
-          ctx.fillStyle = '#7c5631';
-          for (let k = 0; k < 3; k++) {
-            ctx.beginPath();
-            ctx.arc(px + z * (0.3 + k * 0.2), py + z * 0.75, z * 0.13, 0, Math.PI * 2);
-            ctx.fill();
-          }
-          ctx.fillStyle = '#9a6b3f';
-          ctx.beginPath();
-          ctx.arc(px + z * 0.4, py + z * 0.55, z * 0.13, 0, Math.PI * 2);
-          ctx.arc(px + z * 0.6, py + z * 0.55, z * 0.13, 0, Math.PI * 2);
-          ctx.fill();
-          // axe-in-stump accent
-          ctx.fillStyle = '#3f6f37';
-          ctx.beginPath();
-          ctx.arc(px + z * 0.78, py + z * 0.3, z * 0.16, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-        }
-        case 'sawmill': {
-          // shed
-          ctx.fillStyle = '#a3744a';
-          ctx.fillRect(px + z * 0.1, py + z * 0.42, z * 0.8, z * 0.46);
-          ctx.fillStyle = '#6e4f2f';
-          ctx.beginPath();
-          ctx.moveTo(px + z * 0.04, py + z * 0.46);
-          ctx.lineTo(px + z * 0.5, py + z * 0.12);
-          ctx.lineTo(px + z * 0.96, py + z * 0.46);
-          ctx.closePath();
-          ctx.fill();
-          // saw blade
-          ctx.strokeStyle = '#d7d2c8';
-          ctx.lineWidth = Math.max(1, z * 0.07);
-          ctx.beginPath();
-          ctx.arc(px + z * 0.5, py + z * 0.66, z * 0.15, 0, Math.PI * 2);
-          ctx.stroke();
-          break;
-        }
-      }
-      if (z >= 11) this.label(ind.name, px + z / 2, py - 4);
+      this.drawIndustry(ind, sx(ind.x), sy(ind.y), z);
+      if (z >= 11) this.label(ind.name, sx(ind.x) + z / 2, sy(ind.y) - 4);
     }
+  }
+
+  /** Building base tinted by kind with the industry's glyph — distinct and cheap. */
+  private drawIndustry(ind: Industry, px: number, py: number, z: number): void {
+    const { ctx } = this;
+    const def = industryDef(ind.kind);
+    const tint = INDUSTRY_TINT[ind.kind] ?? '#7a7a82';
+
+    // shadow + main block
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(px + z * 0.16, py + z * 0.32, z * 0.74, z * 0.62);
+    ctx.fillStyle = tint;
+    ctx.fillRect(px + z * 0.12, py + z * 0.28, z * 0.74, z * 0.6);
+    // roof strip
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.fillRect(px + z * 0.12, py + z * 0.28, z * 0.74, z * 0.12);
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = Math.max(1, z * 0.05);
+    ctx.strokeRect(px + z * 0.12, py + z * 0.28, z * 0.74, z * 0.6);
+
+    // a smokestack for processors / power that have output activity
+    if (def.recipe || ind.kind === 'powerPlant') {
+      ctx.fillStyle = '#55555c';
+      ctx.fillRect(px + z * 0.66, py + z * 0.1, z * 0.12, z * 0.3);
+    }
+    // glyph
+    if (z >= 9) {
+      ctx.fillStyle = '#fdfdfa';
+      ctx.font = `${Math.floor(z * 0.5)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(def.icon, px + z * 0.49, py + z * 0.62);
+      ctx.textBaseline = 'alphabetic';
+    }
+    // activity lamp (green when producing)
+    if (ind.activity > 0.05) {
+      ctx.fillStyle = '#6fe06f';
+      ctx.beginPath();
+      ctx.arc(px + z * 0.2, py + z * 0.34, z * 0.06, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // --------------------------------------------------------- rival territory
+
+  private drawRivalLinks(
+    state: GameState,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    ctx.save();
+    ctx.setLineDash([z * 0.5, z * 0.4]);
+    ctx.lineWidth = Math.max(1.5, z * 0.1);
+    for (const rival of state.rivals) {
+      ctx.strokeStyle = rival.color + 'cc';
+      for (const link of rival.links) {
+        const a = state.towns.find((t) => t.id === link.a);
+        const b = state.towns.find((t) => t.id === link.b);
+        if (!a || !b) continue;
+        ctx.beginPath();
+        ctx.moveTo(sx(a.x) + z / 2, sy(a.y) + z / 2);
+        ctx.lineTo(sx(b.x) + z / 2, sy(b.y) + z / 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    ctx.setLineDash([]);
   }
 
   // --------------------------------------------------------------- stations
@@ -623,8 +627,8 @@ export class Renderer {
       const selected = ui.selected?.kind === 'station' && ui.selected.id === station.id;
 
       if (selected) {
-        // catchment area
-        const r = STATION_RADIUS;
+        // catchment area sized by tier
+        const r = stationRadius(station);
         ctx.fillStyle = 'rgba(120, 170, 255, 0.13)';
         ctx.fillRect(sx(station.x - r), sy(station.y - r), z * (2 * r + 1), z * (2 * r + 1));
         ctx.strokeStyle = 'rgba(120, 170, 255, 0.5)';
@@ -632,21 +636,33 @@ export class Renderer {
         ctx.strokeRect(sx(station.x - r), sy(station.y - r), z * (2 * r + 1), z * (2 * r + 1));
       }
 
-      // platform
+      // platform widens with tier
+      const plat = 0.7 + station.level * 0.12;
+      const pad = (1 - plat) / 2;
       ctx.fillStyle = '#9b9b9b';
-      ctx.fillRect(px + z * 0.02, py + z * 0.55, z * 0.96, z * 0.38);
+      ctx.fillRect(px + z * pad, py + z * 0.58, z * plat, z * 0.34);
       ctx.fillStyle = '#7d7d7d';
-      ctx.fillRect(px + z * 0.02, py + z * 0.55, z * 0.96, z * 0.08);
-      // building
+      ctx.fillRect(px + z * pad, py + z * 0.58, z * plat, z * 0.07);
+      // building — bigger roof for higher tiers
+      const bw = 0.5 + station.level * 0.12;
       ctx.fillStyle = '#d8cdb4';
-      ctx.fillRect(px + z * 0.2, py + z * 0.28, z * 0.6, z * 0.34);
+      ctx.fillRect(px + z * (0.5 - bw / 2), py + z * 0.32, z * bw, z * 0.3);
       ctx.fillStyle = '#3a5f9e';
       ctx.beginPath();
-      ctx.moveTo(px + z * 0.12, py + z * 0.32);
-      ctx.lineTo(px + z * 0.5, py + z * 0.06);
-      ctx.lineTo(px + z * 0.88, py + z * 0.32);
+      ctx.moveTo(px + z * (0.5 - bw / 2 - 0.06), py + z * 0.34);
+      ctx.lineTo(px + z * 0.5, py + z * 0.08);
+      ctx.lineTo(px + z * (0.5 + bw / 2 + 0.06), py + z * 0.34);
       ctx.closePath();
       ctx.fill();
+      // tier pips on the roof
+      if (z >= 12) {
+        ctx.fillStyle = '#ffdc50';
+        for (let p = 0; p <= station.level; p++) {
+          ctx.beginPath();
+          ctx.arc(px + z * (0.36 + p * 0.14), py + z * 0.2, z * 0.04, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       if (selected) {
         ctx.strokeStyle = '#ffdc50';
         ctx.lineWidth = 2;
@@ -749,9 +765,7 @@ export class Renderer {
             : { x: train.x, y: train.y, angle };
         const batch = train.cargo[(w - 1) % Math.max(1, train.cargo.length)];
         const fill =
-          train.cargo.length > 0 && batch
-            ? WAGON_CARGO_COLORS[batch.kind]
-            : '#5a5e66';
+          train.cargo.length > 0 && batch ? wagonColor(batch.kind) : '#5a5e66';
         drawCar(pos.x, pos.y, pos.angle, z * 0.62, z * 0.42, fill, false);
       }
       drawCar(train.x, train.y, angle, z * 0.8, z * 0.5, type.color, true);
@@ -815,18 +829,20 @@ export class Renderer {
     const { x, y } = ui.hover;
     if (x < 0 || y < 0 || x >= state.map.width || y >= state.map.height) return;
 
-    if (ui.tool === 'track' || ui.tool === 'station' || ui.tool === 'bulldoze') {
+    if (ui.tool === 'track' || ui.tool === 'station' || ui.tool === 'bulldoze' || ui.tool === 'upgrade') {
       const check =
         ui.tool === 'track'
           ? canBuildTrack(state, x, y)
           : ui.tool === 'station'
-            ? canBuildStation(state, x, y)
-            : { ok: stationAt(state, x, y) !== undefined || hasTrack(state, x, y), cost: 0 };
+            ? canBuildStation(state, x, y, ui.stationLevel)
+            : ui.tool === 'upgrade'
+              ? { ok: stationAt(state, x, y) !== undefined, cost: 0 }
+              : { ok: stationAt(state, x, y) !== undefined || hasTrack(state, x, y), cost: 0 };
       ctx.strokeStyle = check.ok ? 'rgba(120, 255, 120, 0.9)' : 'rgba(255, 90, 90, 0.9)';
       ctx.lineWidth = 2;
       ctx.strokeRect(sx(x) + 1, sy(y) + 1, z - 2, z - 2);
       if (ui.tool === 'station') {
-        const r = STATION_RADIUS;
+        const r = stationTier(ui.stationLevel).radius;
         ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
         ctx.fillRect(sx(x - r), sy(y - r), z * (2 * r + 1), z * (2 * r + 1));
       }
@@ -895,7 +911,25 @@ export class Renderer {
       const ty = (i - tx) / W;
       ctx.fillRect(r.x + tx * scaleX, r.y + ty * scaleY, Math.max(1, scaleX), Math.max(1, scaleY));
     }
-    // towns / stations / trains
+    // rival territory lines
+    ctx.lineWidth = 1;
+    for (const rival of state.rivals) {
+      ctx.strokeStyle = rival.color;
+      for (const link of rival.links) {
+        const a = state.towns.find((t) => t.id === link.a);
+        const b = state.towns.find((t) => t.id === link.b);
+        if (!a || !b) continue;
+        ctx.beginPath();
+        ctx.moveTo(r.x + a.x * scaleX, r.y + a.y * scaleY);
+        ctx.lineTo(r.x + b.x * scaleX, r.y + b.y * scaleY);
+        ctx.stroke();
+      }
+    }
+    // industries / towns / stations / trains
+    for (const i of state.industries) {
+      ctx.fillStyle = '#6f6f78';
+      ctx.fillRect(r.x + i.x * scaleX - 1, r.y + i.y * scaleY - 1, 2, 2);
+    }
     for (const t of state.towns) {
       ctx.fillStyle = '#e0a23c';
       ctx.fillRect(r.x + t.x * scaleX - 1, r.y + t.y * scaleY - 1, 3, 3);

@@ -1,5 +1,11 @@
-import { DAY_SECONDS } from './game/config';
-import { addMessage, newGame, repayLoan, takeLoan } from './game/GameState';
+import { DAY_SECONDS, PERIODS } from './game/config';
+import {
+  addMessage,
+  newGame,
+  repayLoan,
+  takeLoan,
+  upgradeStation,
+} from './game/GameState';
 import { update } from './game/Simulation';
 import { GameState } from './game/types';
 import { assignRoute, buyTrain, sellTrain } from './game/Trains';
@@ -33,10 +39,14 @@ const input = new InputController({ getState, ui, renderer });
 const hud = new HUD(getState, ui, {
   setTool: (tool) => input.setTool(tool),
   newGame: () => {
+    const periodList = PERIODS.map((p, i) => `${i + 1}) ${p.label} (${p.startYear}) — ${p.blurb}`).join('\n');
+    const pick = window.prompt(`Choose a starting era:\n${periodList}`, '2');
+    if (pick === null) return;
+    const period = PERIODS[Math.max(0, Math.min(PERIODS.length - 1, Number(pick.trim()) - 1))] ?? PERIODS[1];
     const answer = window.prompt('Seed for the new world (any text or number):', String(Date.now() % 100000));
     if (answer === null) return;
     const seed = /^\d+$/.test(answer.trim()) ? Number(answer.trim()) >>> 0 : hashSeed(answer);
-    state = newGame(seed);
+    state = newGame(seed, period.id);
     ui.selected = null;
     ui.draft = null;
     ui.follow = false;
@@ -122,6 +132,13 @@ const hud = new HUD(getState, ui, {
     const result = repayLoan(state);
     if (!result.ok && result.reason) addMessage(state, result.reason);
   },
+  upgradeStation: (id) => {
+    const result = upgradeStation(state, id);
+    if (!result.ok && result.reason) addMessage(state, result.reason);
+  },
+  setStationLevel: (level) => {
+    ui.stationLevel = level;
+  },
 });
 
 function fitCanvas(): void {
@@ -143,8 +160,11 @@ if (import.meta.env.DEV) {
         getState,
         ui,
         renderer,
+        setState: (s: GameState) => { state = s; },
+        newGame,
         buildTrack: gs.buildTrack,
         buildStation: gs.buildStation,
+        upgradeStation: gs.upgradeStation,
         buyTrain: tr.buyTrain,
       };
     }),

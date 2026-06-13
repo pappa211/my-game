@@ -1,10 +1,11 @@
 # 🚂 Rail Frontier
 
-A playable, original browser-based transport-management strategy game inspired by
-classic rail tycoon mechanics. You run a young railway company on a procedurally
-generated map: build track and stations, bridge rivers, buy trains, assign
-routes, haul passengers and freight through multi-step cargo chains, grow the
-towns you serve — and manage your bank loan while you do it.
+A playable, original browser-based **railroad-tycoon strategy game** inspired by
+*Railroad Tycoon 3*. Found a railroad company in a chosen era, build a network
+across a large procedurally generated map connecting towns, mines, farms,
+factories and ports, run freight and passengers through multi-stage cargo
+chains, ride the boom/bust economy, manage bonds and company value, and out-grow
+rival railroads that expand and claim territory as the decades pass.
 
 Built with **TypeScript + Vite + Canvas 2D**, no backend, no runtime dependencies.
 Tested with **Vitest**.
@@ -28,77 +29,86 @@ npm run preview  # serve the production build
 
 A help overlay opens on first launch (press `H` to reopen it).
 
-1. **Find an opportunity** — the map always contains two towns close together,
-   a coal mine within reach of a power plant, and a lumber camp near a sawmill.
-2. **Build stations** (tool `3`, $500 each) near towns/industries. A station
-   serves everything within 3 tiles (the radius is previewed while placing).
-3. **Lay track** (tool `2`) connecting your stations. Click-drag to paint; a
-   live cost readout follows the cursor. Plains cost $30/tile, forest $60,
-   hills $120 — and track over water builds a **bridge** for $220/tile.
-   Trains run **diagonally** between adjacent track tiles automatically.
-4. **Buy a train** (tool `4`): pick one of four types, click your stations in
-   order, press *Buy & Start*. If the stations aren't connected by track, the
-   purchase is rejected with a clear message.
-5. The train loops over its stops, loading cargo and earning revenue on every
-   delivery (revenue scales with quantity and distance). Trains cost money per
-   day to run; watch the net income in the top bar and the monthly chart in
-   the **Finance** tab.
-6. Short on cash? **Borrow from the bank** (Finance tab) in $5,000 steps up to
-   $30,000 — interest is charged monthly until you repay.
+1. **Pick an era and find profitable routes.** New Game lets you start in the
+   Pioneer Age (1830), Steam Boom (1880) or Diesel Era (1950). Inspect towns and
+   industries (Info tab) to see what each produces and demands.
+2. **Build stations** (tool `3`). Choose a tier — **Depot** (radius 2),
+   **Station** (radius 3) or **Terminal** (radius 4); bigger tiers reach further
+   and stockpile more cargo. Tool `7` upgrades an existing station in place.
+3. **Lay track** (tool `2`), click-dragging to paint. Terrain sets the cost;
+   track over water builds a bridge. Trains run **diagonally** automatically and
+   route over the shortest path.
+4. **Buy a locomotive** (tool `4`). Only **era-appropriate** engines are for
+   sale, and faster, stronger ones unlock as the years advance (you're notified
+   when one arrives). Each engine has its own cost, capacity, speed, running
+   cost and **reliability** — unreliable engines break down and need repairs.
+5. **Move freight and passengers.** Revenue scales with quantity, haul distance
+   and the **current economy**. Well-served towns grow; bigger towns generate
+   more traffic.
+6. **Run the company.** Issue **bonds** against a value-scaled credit line
+   (Finance tab), watch the boom/bust **economy** swing revenue, and track the
+   **Rivals** tab — competitors expand their own networks and claim territory
+   (dashed lines on the map). Connect a contested town before they take its
+   traffic, and out-value them in the rankings.
 
-**Cargo chains:**
+### Cargo & supply chains
 
-- Towns generate **passengers** (scaled by population). Delivering passengers
-  to another town earns money *and makes the destination town grow* — bigger
-  towns generate more passengers.
-- Coal mines produce **coal** → deliver to a power plant.
-- Lumber camps produce **wood** → deliver to a sawmill, which converts it into
-  **goods** waiting at the same station → haul the goods to any town.
+Towns generate **passengers** and **mail** and demand passengers, mail, goods,
+food and lumber. Industries form multi-stage chains:
 
-**Controls:** pan with right/middle-drag, WASD or arrow keys · zoom with the
-mouse wheel · click the **minimap** (bottom-left) to jump anywhere · tools on
-keys `1–6` · `Space` pauses · `F` follows the selected train · `Esc`
-cancels/deselects · `H` toggles help. Game speed: 1×/2×/4× buttons.
+- **coal** (mine) + **iron** (mine) → **steel** (steel mill) → **goods**
+  (factory) → towns
+- **logs** (lumber camp) → **lumber** (sawmill) → factories & towns
+- **grain** (farm) or **livestock** (ranch) → **food** (food mill) → towns
+- **oil** (well) and **coal** → **power plants** (pure consumers, pay well)
+- **ports** (coastal) import goods, mail and passengers, and accept raw
+  materials for export
 
-**Side panel tabs:** *Info* (contextual inspector), *Trains* (fleet list with
-status and lifetime earnings — click to select & follow; trains can be sold
-for 50% of their price from the Info panel), *Finance* (cash, company value,
-12-month income/cost bar chart, bank loans).
+Processors hold an input **stockpile** and convert it to output over time, so a
+steel mill only ships steel once you keep feeding it coal *and* iron.
 
-**Save/Load:** the 💾/📂 buttons persist the full game state to browser
-localStorage, and the game **autosaves every two minutes** to a separate slot
-(startup resumes from whichever is newest). *New Game* prompts for a seed —
-the same seed always generates the same world.
+**Controls:** pan with right/middle-drag, WASD or arrows · zoom with the wheel ·
+click the **minimap** to jump · tools on keys `1–7` · `Space` pauses · `F`
+follows the selected train · `Esc` cancels · `H` toggles help. Speed: 1×/2×/4×.
+
+**Side-panel tabs:** *Info* (contextual inspector), *Fleet* (train list with
+status/earnings — click to follow, or sell), *Cargo* (traffic report, cargo
+catalogue, supply-chain guide, industry census), *Finance* (cash, value,
+economy, 12-month chart, bonds) and *Rivals* (company rankings).
+
+**Save/Load:** the 💾/📂 buttons persist the full game state to localStorage, and
+the game **autosaves every two minutes** (startup resumes from the newest save).
 
 ## What is implemented
 
-- **Procedural map** — 164×140 tiles, value-noise terrain (plains, forest,
-  hills, water), ≥15 named towns, four industry kinds (coal mines, power
-  plants, lumber camps, sawmills), deterministic seeds, guaranteed starting
-  opportunities.
-- **Construction** — track with terrain-dependent cost, bridges over water,
-  stations with catchment radius, bulldozing (stations on active routes are
-  protected), live valid/invalid placement feedback with cost preview, funds
-  checking.
-- **Trains & routing** — four train types (cost/capacity/speed/running cost),
-  multi-stop looping routes, **8-directional shortest-path routing (Dijkstra)
-  over the track graph** with true diagonal distances, distance-correct
-  movement, stranded-train detection with retry, route reassignment, selling.
-- **Economy** — passenger demand from town population, two cargo chains
-  (coal → power plant; wood → sawmill → goods → town), service-driven town
-  growth, distance × quantity delivery revenue, per-train lifetime earnings,
-  continuous running costs, bank loans with monthly interest, monthly
-  income/expense ledger with 12-month history, company value.
-- **Graphics** — per-tile terrain variation, animated water with shorelines,
-  tree clusters, shaded hills, twin-rail track with sleepers, timber bridges,
-  population-scaled building clusters for towns, distinct industry sprites,
-  station platforms, multi-wagon trains colored by cargo with smoke particles,
-  follow camera, minimap with viewport rectangle and click-to-jump.
-- **UI** — canvas map with pan/zoom, six mouse tools, tabbed side panel
-  (inspector / fleet list / finance dashboard with chart), message log,
-  top-bar finances/date, help overlay.
-- **Persistence** — JSON serialization of the whole `GameState` to
-  localStorage with versioning, autosave, and corrupt-save handling.
+- **Large procedural map** — 260×200 tiles of value-noise terrain (plains,
+  forest, hills, water), ≥24 named towns and ~50 industries across **12 kinds**,
+  deterministic seeds, guaranteed early opportunities.
+- **Data-driven economy** — a cargo catalogue and industry-recipe catalogue
+  drive production, multi-stage processing with industry stockpiles,
+  town demand and service-driven growth, and a live boom/bust **economy
+  multiplier** on revenue.
+- **Construction** — terrain-priced track, bridges over water, three station
+  tiers with in-place upgrades, bulldozing, live placement/cost feedback.
+- **Trains & routing** — an **era-gated locomotive roster** (1830→1968) with
+  cost/capacity/speed/running-cost/**reliability** and obsolescence, 8-direction
+  shortest-path routing with true diagonal distances, multi-stop loops,
+  **breakdowns** and repairs, route reassignment, selling, lifetime earnings.
+- **Finance** — bonds against a value-scaled credit line with monthly interest,
+  company valuation, monthly income/expense ledger with 12-month history.
+- **Competition** — rival railroads that grow, expand their networks and claim
+  town-pair **territory** (shown on the map and minimap), suppressing a
+  contested town's traffic until you connect it; live **company rankings**.
+- **Events & eras** — monthly economic booms/recessions, boom-towns and fires,
+  and locomotive-availability announcements as the calendar advances.
+- **Graphics** — varied terrain with animated water/shorelines, tree clusters
+  and hills, twin-rail track with sleepers and timber bridges, population-scaled
+  towns, distinct sprites for all twelve industries with activity lamps, tiered
+  station buildings, cargo-coloured multi-wagon trains with smoke, follow
+  camera, and a minimap with industries, rival lines and a viewport rectangle.
+- **Reports** — tabbed dashboards for fleet, cargo/traffic, finance and rivals.
+- **Persistence** — versioned JSON serialization with manual + autosave slots
+  and corrupt-save handling.
 
 ## Architecture
 
@@ -106,32 +116,28 @@ the same seed always generates the same world.
 index.html              page shell (toolbar, HUD, panel tabs, help overlay)
 src/
   main.ts               bootstrap, game loop, action wiring, autosave
-  style.css
   game/                 pure simulation — no DOM access
     types.ts            all state interfaces (plain JSON-serializable data)
-    config.ts           tuning constants and train types
+    cargo.ts            data-driven cargo catalogue
+    industries.ts       industry definitions + production recipes
+    config.ts           tuning, station tiers, periods, locomotive roster
     rng.ts              seeded PRNG (mulberry32)
     MapGenerator.ts     terrain noise, town/industry placement
-    GameState.ts        state creation, build actions, loans, finances
+    GameState.ts        state creation, build/upgrade actions, bonds, finances
     Pathfinding.ts      8-directional Dijkstra over track + station tiles
-    Trains.ts           purchase, sale, route validation, movement, arrivals
-    Economy.ts          demand, cargo chains, town growth, revenue, costs
-    Simulation.ts       per-tick orchestration (time, demand, interest, trains)
+    Trains.ts           purchase (era-gated), movement, breakdowns, arrivals
+    Economy.ts          production, processing chains, growth, revenue, costs
+    Events.ts           economic cycle + monthly one-off events
+    Rivals.ts           competing railroads, territory claims, rankings
+    Simulation.ts       per-tick orchestration (time, economy, events, rivals)
   ui/
     Renderer.ts         Canvas 2D rendering, camera, minimap, particles
-    InputController.ts  mouse/keyboard, tool handling, minimap navigation
-    HUD.ts              DOM panels, tabs, toolbar, finance chart, message log
-    uiState.ts          UI-only state (tool, selection, tabs, route drafts)
+    InputController.ts  mouse/keyboard, tools, minimap navigation
+    HUD.ts              DOM panels, tabs, reports, toolbar, message log
+    uiState.ts          UI-only state (tool, tier, selection, tabs, drafts)
   persistence/
     SaveLoad.ts         serialize/deserialize + manual & autosave slots
-tests/
-  pathfinding.test.ts   connected routes, corners, disconnection
-  economy.test.ts       delivery revenue, running costs, construction costs,
-                        demand, full simulated shuttle loop
-  gameplay.test.ts      bridges, diagonal movement, wood→goods chain,
-                        town growth, loans, selling trains
-  saveload.test.ts      serialize/localStorage roundtrips, corrupt saves
-  mapgen.test.ts        determinism, world content guarantees
+tests/                  pathfinding, economy, gameplay, mapgen, saveload (Vitest)
 ```
 
 The simulation (`src/game/`) never touches the DOM, so the whole game logic is
@@ -139,17 +145,15 @@ unit-testable headlessly; the UI layer reads state and calls action functions.
 
 ## Known limitations
 
-- No signals or collisions — trains pass through each other.
-- Bulldozing refunds nothing; demolishing a station requires removing it from
-  routes first.
-- Saves from the previous version (v1) are not migrated.
-- Single manual save slot (plus the rolling autosave).
+- Rival networks are abstract (territory + value), not per-tile track on the map.
+- No signals/collisions — trains pass through each other.
+- Bulldozing refunds nothing; a station must be off all routes before demolition.
+- Saves from previous versions are not migrated (the format is versioned).
 
 ## Suggested next improvements
 
-1. Station ratings that throttle demand when service is poor.
-2. Multiple save slots; export/import save files.
-3. Per-track occupancy / signals.
-4. More cargo chains (iron + coal → steel → factory).
-5. Sound effects and a quarterly newspaper with company milestones.
-6. Competitor AI companies.
+1. On-map rival track and trains competing for the same cargo.
+2. Scenario goals and victory conditions per era.
+3. Station ratings that throttle demand when service is poor.
+4. Stock market: buy/sell shares in your company and rivals.
+5. Sound effects and a periodic newspaper of company milestones.

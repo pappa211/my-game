@@ -22,11 +22,25 @@ export interface Town {
   x: number;
   y: number;
   name: string;
-  /** fractional — grows with passenger service; floor for display */
+  /** fractional — grows with service; floor for display */
   population: number;
+  /** 0..1 quality of rail service, smoothed; drives growth */
+  serviceLevel: number;
 }
 
-export type IndustryKind = 'coalMine' | 'powerPlant' | 'lumberCamp' | 'sawmill';
+export type IndustryKind =
+  | 'coalMine'
+  | 'ironMine'
+  | 'oilWell'
+  | 'lumberCamp'
+  | 'farm'
+  | 'ranch'
+  | 'steelMill'
+  | 'factory'
+  | 'sawmill'
+  | 'mill'
+  | 'powerPlant'
+  | 'port';
 
 export interface Industry {
   id: number;
@@ -34,23 +48,24 @@ export interface Industry {
   y: number;
   kind: IndustryKind;
   name: string;
+  /** raw inputs delivered here, awaiting processing */
+  stock: Record<string, number>;
+  /** smoothed output activity 0..1, for display */
+  activity: number;
 }
 
-export type CargoKind = 'passengers' | 'coal' | 'wood' | 'goods';
-
-export const CARGO_KINDS: CargoKind[] = ['passengers', 'coal', 'wood', 'goods'];
+/** Cargo ids are plain strings defined in cargo.ts. */
+export type CargoKind = string;
 
 export interface Station {
   id: number;
   x: number;
   y: number;
   name: string;
+  /** 0 = depot, 1 = station, 2 = terminal — see STATION_TIERS */
+  level: number;
   /** goods waiting to be picked up (fractional accumulation, floored on load) */
-  waiting: Record<CargoKind, number>;
-}
-
-export function emptyWaiting(): Record<CargoKind, number> {
-  return { passengers: 0, coal: 0, wood: 0, goods: 0 };
+  waiting: Record<string, number>;
 }
 
 export interface TrainTypeDef {
@@ -65,6 +80,12 @@ export interface TrainTypeDef {
   color: string;
   /** wagons drawn behind the engine */
   wagons: number;
+  /** 0..1 — lower means more frequent breakdowns */
+  reliability: number;
+  /** first calendar year this engine can be bought */
+  availableYear: number;
+  /** year it stops being sold (existing units keep running) */
+  obsoleteYear: number;
 }
 
 export interface CargoBatch {
@@ -74,7 +95,7 @@ export interface CargoBatch {
   origin: number;
 }
 
-export type TrainState = 'moving' | 'loading' | 'stranded';
+export type TrainState = 'moving' | 'loading' | 'stranded' | 'broken';
 
 export interface Train {
   id: number;
@@ -91,11 +112,13 @@ export interface Train {
   /** fractional index into path */
   pathPos: number;
   state: TrainState;
-  /** days remaining for loading / stranded-retry */
+  /** days remaining for loading / stranded-retry / breakdown repair */
   loadTimer: number;
   cargo: CargoBatch[];
   /** lifetime delivery revenue */
   earnings: number;
+  /** game day the engine was purchased (for age / obsolescence) */
+  builtDay: number;
   x: number;
   y: number;
 }
@@ -117,6 +140,21 @@ export interface Finances {
 export interface Message {
   day: number;
   text: string;
+  /** soft category for colouring: info | money | warn | era */
+  kind?: 'info' | 'money' | 'warn' | 'era';
+}
+
+/** A computer-controlled competing railroad. */
+export interface Rival {
+  id: number;
+  name: string;
+  color: string;
+  cash: number;
+  value: number;
+  /** town-id pairs this rival has connected (territory it has claimed) */
+  links: { a: number; b: number }[];
+  /** days until the rival considers its next expansion */
+  nextMoveIn: number;
 }
 
 export interface GameState {
@@ -129,11 +167,23 @@ export interface GameState {
   stations: Station[];
   trains: Train[];
   cash: number;
-  /** outstanding loan principal */
+  /** outstanding bond/loan principal */
   loan: number;
+  /** calendar year the company was founded */
+  startYear: number;
   /** total game days elapsed (float) */
   day: number;
+  /** economic cycle multiplier on cargo revenue (≈0.7..1.3) */
+  economy: number;
+  /** target the economy drifts toward; re-rolled by events */
+  economyTarget: number;
   finances: Finances;
+  rivals: Rival[];
   nextId: number;
   messages: Message[];
+}
+
+/** Current in-game calendar year. */
+export function currentYear(state: GameState): number {
+  return state.startYear + Math.floor(state.day / 360);
 }

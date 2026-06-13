@@ -1,8 +1,8 @@
 import { Point } from '../game/types';
 
-export type Tool = 'inspect' | 'track' | 'station' | 'train' | 'route' | 'bulldoze';
+export type Tool = 'inspect' | 'track' | 'station' | 'train' | 'route' | 'bulldoze' | 'upgrade';
 
-export type PanelTab = 'info' | 'trains' | 'finance';
+export type PanelTab = 'info' | 'trains' | 'finance' | 'economy' | 'rankings';
 
 export type Selection =
   | { kind: 'tile'; x: number; y: number }
@@ -29,6 +29,8 @@ export interface UiState {
   paused: boolean;
   helpVisible: boolean;
   panelTab: PanelTab;
+  /** station tier the station tool will place (0 depot, 1 station, 2 terminal) */
+  stationLevel: number;
   /** camera tracks the selected train */
   follow: boolean;
   /** money spent during the current track-paint drag (cost readout) */
@@ -45,6 +47,7 @@ export function createUiState(): UiState {
     paused: false,
     helpVisible: true,
     panelTab: 'info',
+    stationLevel: 1,
     follow: false,
     dragSpent: 0,
   };

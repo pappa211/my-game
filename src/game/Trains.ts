@@ -1,5 +1,9 @@
 import {
+  availableTrainTypes,
+  BREAKDOWN_SCALE,
   LOAD_DAYS,
+  REPAIR_COST,
+  REPAIR_DAYS,
   STRANDED_RETRY_DAYS,
   TRAIN_SELL_FACTOR,
   trainType,
@@ -7,7 +11,7 @@ import {
 import { loadAtStation, unloadAtStation } from './Economy';
 import { addMessage, earn, getStation, spend } from './GameState';
 import { findPath } from './Pathfinding';
-import { GameState, Train } from './types';
+import { currentYear, GameState, Train, TrainTypeDef } from './types';
 
 export interface TrainResult {
   ok: boolean;
@@ -32,6 +36,10 @@ function validateRoute(state: GameState, stops: number[]): string | null {
 
 export function buyTrain(state: GameState, typeId: string, stops: number[]): TrainResult {
   const type = trainType(typeId);
+  const year = currentYear(state);
+  if (!availableTrainTypes(year).some((t) => t.id === typeId)) {
+    return { ok: false, reason: `The ${type.name} is not available in ${year}.` };
+  }
   if (state.cash < type.cost) {
     return { ok: false, reason: `Not enough cash: ${type.name} costs $${type.cost}.` };
   }
@@ -52,6 +60,7 @@ export function buyTrain(state: GameState, typeId: string, stops: number[]): Tra
     loadTimer: LOAD_DAYS,
     cargo: [],
     earnings: 0,
+    builtDay: state.day,
     x: home.x,
     y: home.y,
   };
@@ -147,6 +156,19 @@ export function arriveAtStation(state: GameState, train: Train): void {
   train.loadTimer = LOAD_DAYS;
 }
 
+/** Random mechanical failure while moving. Returns true if the train broke. */
+function maybeBreakdown(state: GameState, train: Train, type: TrainTypeDef, dtDays: number): boolean {
+  const perDay = (1 - type.reliability) / BREAKDOWN_SCALE;
+  if (Math.random() < perDay * dtDays) {
+    train.state = 'broken';
+    train.loadTimer = REPAIR_DAYS;
+    spend(state, REPAIR_COST);
+    addMessage(state, `🔧 ${train.name} broke down — repairs cost $${REPAIR_COST}.`, 'warn');
+    return true;
+  }
+  return false;
+}
+
 export function updateTrains(state: GameState, dtDays: number): void {
   for (const train of state.trains) {
     if (train.state === 'loading' || train.state === 'stranded') {
@@ -161,7 +183,13 @@ export function updateTrains(state: GameState, dtDays: number): void {
       }
       continue;
     }
+    if (train.state === 'broken') {
+      train.loadTimer -= dtDays;
+      if (train.loadTimer <= 0) train.state = 'moving';
+      continue;
+    }
     const type = trainType(train.typeId);
+    if (maybeBreakdown(state, train, type, dtDays)) continue;
     // Advance by true distance so diagonal segments don't speed the train up.
     let remaining = type.speed * dtDays;
     const last = train.path.length - 1;
