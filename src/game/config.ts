@@ -1,15 +1,9 @@
-import { CargoKind, Terrain, TrainTypeDef } from './types';
+import { Terrain, TrainTypeDef } from './types';
 
 /** real-time seconds per game day at 1x speed */
 export const DAY_SECONDS = 2;
 export const MONTH_DAYS = 30;
 export const YEAR_DAYS = 360;
-
-export const START_CASH = 15000;
-
-/** stations serve towns/industries within this Chebyshev distance */
-export const STATION_RADIUS = 3;
-export const STATION_COST = 500;
 
 export const TRACK_COST: Record<number, number> = {
   [Terrain.Grass]: 30,
@@ -24,84 +18,111 @@ export const LOAD_DAYS = 0.4;
 /** days between pathfinding retries when a train is stranded */
 export const STRANDED_RETRY_DAYS = 1;
 
+// ---- cargo generation ----
 /** passengers generated per town inhabitant per day */
 export const PASSENGER_RATE = 0.02;
-/** coal units produced per mine per day */
-export const COAL_RATE = 8;
-/** wood units produced per lumber camp per day */
-export const WOOD_RATE = 7;
-/** max units of one cargo kind waiting at a station */
-export const STATION_CARGO_CAP = 150;
+/** mail generated per town inhabitant per day */
+export const MAIL_RATE = 0.007;
 
-/** goods that appear at a sawmill's station per unit of wood delivered */
-export const WOOD_TO_GOODS = 0.75;
+/** population gained per unit of demanded cargo delivered to a town */
+export const GROWTH_PER_DELIVERY = 0.05;
+export const TOWN_MAX_POP = 9000;
 
-/** population gained by served towns per passenger delivered */
-export const GROWTH_PER_PASSENGER = 0.08;
-export const TOWN_MAX_POP = 5000;
+// ---- station tiers ----
+export interface StationTier {
+  level: number;
+  name: string;
+  radius: number;
+  cost: number;
+  /** max units of one cargo kind that can wait here */
+  cargoCap: number;
+}
 
-/** loans are taken and repaid in steps; interest is charged monthly */
+export const STATION_TIERS: StationTier[] = [
+  { level: 0, name: 'Depot', radius: 2, cost: 300, cargoCap: 120 },
+  { level: 1, name: 'Station', radius: 3, cost: 700, cargoCap: 220 },
+  { level: 2, name: 'Terminal', radius: 4, cost: 1500, cargoCap: 400 },
+];
+
+export function stationTier(level: number): StationTier {
+  return STATION_TIERS[Math.max(0, Math.min(STATION_TIERS.length - 1, level))];
+}
+
+/** Default tier placed by the station tool, and legacy radius/cost aliases. */
+export const DEFAULT_STATION_LEVEL = 1;
+export const STATION_RADIUS = STATION_TIERS[DEFAULT_STATION_LEVEL].radius;
+export const STATION_COST = STATION_TIERS[DEFAULT_STATION_LEVEL].cost;
+
+// ---- finance ----
 export const LOAN_STEP = 5000;
-export const LOAN_MAX = 30000;
+/** minimum credit line; the real limit also scales with company value */
+export const LOAN_FLOOR = 30000;
 export const LOAN_INTEREST_YEARLY = 0.1;
-
-/** fraction of the purchase price refunded when selling a train */
 export const TRAIN_SELL_FACTOR = 0.5;
 
-export const CARGO_RATES: Record<CargoKind, { base: number; perTile: number }> = {
-  passengers: { base: 2, perTile: 0.4 },
-  coal: { base: 3, perTile: 0.5 },
-  wood: { base: 3, perTile: 0.45 },
-  goods: { base: 4, perTile: 0.6 },
-};
+// ---- economy cycle ----
+export const ECONOMY_MIN = 0.7;
+export const ECONOMY_MAX = 1.35;
+/** fraction of the gap to the target closed per day */
+export const ECONOMY_DRIFT = 0.01;
 
-export const CARGO_LABELS: Record<CargoKind, string> = {
-  passengers: 'passengers',
-  coal: 'coal',
-  wood: 'wood',
-  goods: 'goods',
-};
+// ---- breakdowns ----
+/** base mean-days-between-failures at reliability 1.0 is this / (1-rel) */
+export const BREAKDOWN_SCALE = 30;
+export const REPAIR_DAYS = 0.8;
+export const REPAIR_COST = 200;
 
+export interface Period {
+  id: string;
+  label: string;
+  startYear: number;
+  startCash: number;
+  blurb: string;
+}
+
+export const PERIODS: Period[] = [
+  { id: 'pioneer', label: 'Pioneer Age', startYear: 1830, startCash: 20000, blurb: 'Wooden engines, open frontier.' },
+  { id: 'steam', label: 'Steam Boom', startYear: 1880, startCash: 26000, blurb: 'Powerful steam, busy industry.' },
+  { id: 'modern', label: 'Diesel Era', startYear: 1950, startCash: 32000, blurb: 'Diesels and dense networks.' },
+];
+
+export function getPeriod(id: string): Period {
+  return PERIODS.find((p) => p.id === id) ?? PERIODS[0];
+}
+
+// ---- locomotive roster (era-gated) ----
 export const TRAIN_TYPES: TrainTypeDef[] = [
   {
-    id: 'local',
-    name: 'Local Runner',
-    cost: 900,
-    capacity: 40,
-    speed: 6,
-    runningCost: 25,
-    color: '#d8413c',
-    wagons: 2,
+    id: 'pioneer', name: 'Pioneer 0-4-0', cost: 800, capacity: 28, speed: 5, runningCost: 20,
+    color: '#b5533a', wagons: 2, reliability: 0.8, availableYear: 1830, obsoleteYear: 1875,
   },
   {
-    id: 'express',
-    name: 'Swift Express',
-    cost: 2100,
-    capacity: 30,
-    speed: 10,
-    runningCost: 45,
-    color: '#3fae6a',
-    wagons: 1,
+    id: 'american', name: 'American 4-4-0', cost: 1300, capacity: 42, speed: 7, runningCost: 28,
+    color: '#d8413c', wagons: 3, reliability: 0.85, availableYear: 1848, obsoleteYear: 1905,
   },
   {
-    id: 'heavy',
-    name: 'Heavy Hauler',
-    cost: 1400,
-    capacity: 80,
-    speed: 4.5,
-    runningCost: 35,
-    color: '#3a6fd8',
-    wagons: 3,
+    id: 'mogul', name: 'Mogul 2-6-0', cost: 1900, capacity: 75, speed: 6, runningCost: 36,
+    color: '#3a6fd8', wagons: 4, reliability: 0.86, availableYear: 1868, obsoleteYear: 1920,
   },
   {
-    id: 'giant',
-    name: 'Iron Giant',
-    cost: 3200,
-    capacity: 150,
-    speed: 3.5,
-    runningCost: 60,
-    color: '#8458c9',
-    wagons: 4,
+    id: 'atlantic', name: 'Atlantic 4-4-2', cost: 2500, capacity: 50, speed: 11, runningCost: 42,
+    color: '#3fae6a', wagons: 2, reliability: 0.88, availableYear: 1895, obsoleteYear: 1940,
+  },
+  {
+    id: 'consolidation', name: 'Consolidation 2-8-0', cost: 2900, capacity: 115, speed: 6.5, runningCost: 50,
+    color: '#8458c9', wagons: 5, reliability: 0.88, availableYear: 1902, obsoleteYear: 1950,
+  },
+  {
+    id: 'hudson', name: 'Hudson 4-6-4', cost: 3900, capacity: 85, speed: 13, runningCost: 58,
+    color: '#2bb5c9', wagons: 3, reliability: 0.9, availableYear: 1930, obsoleteYear: 1965,
+  },
+  {
+    id: 'diesel', name: 'EMD Diesel', cost: 4700, capacity: 135, speed: 12, runningCost: 54,
+    color: '#e0a030', wagons: 5, reliability: 0.95, availableYear: 1945, obsoleteYear: 1990,
+  },
+  {
+    id: 'electric', name: 'Electric Express', cost: 6200, capacity: 165, speed: 16, runningCost: 66,
+    color: '#5a9bd8', wagons: 6, reliability: 0.97, availableYear: 1968, obsoleteYear: 9999,
   },
 ];
 
@@ -109,4 +130,15 @@ export function trainType(id: string): TrainTypeDef {
   const t = TRAIN_TYPES.find((t) => t.id === id);
   if (!t) throw new Error(`Unknown train type: ${id}`);
   return t;
+}
+
+/** Engines a player can buy in the given calendar year. */
+export function availableTrainTypes(year: number): TrainTypeDef[] {
+  return TRAIN_TYPES.filter((t) => year >= t.availableYear && year < t.obsoleteYear);
+}
+
+/** Cheapest engine available in a year — used as a sensible default selection. */
+export function defaultTrainType(year: number): TrainTypeDef {
+  const avail = availableTrainTypes(year);
+  return avail[0] ?? TRAIN_TYPES[0];
 }

@@ -11,8 +11,8 @@
         <span class="brand">🚂 Rail Frontier</span>
         <span class="stat big" id="stat-cash"></span>
         <span class="stat" id="stat-date"></span>
+        <span class="stat" id="stat-econ"></span>
         <span class="stat" id="stat-income"></span>
-        <span class="stat" id="stat-expenses"></span>
         <span class="stat" id="stat-value"></span>
         <span class="spacer"></span>
         <button id="btn-pause">⏸ Pause</button>
@@ -27,6 +27,7 @@
         <button data-tool="train">🚆 Buy Train <kbd>4</kbd></button>
         <button data-tool="route">🗺 Route <kbd>5</kbd></button>
         <button data-tool="bulldoze">💥 Bulldoze <kbd>6</kbd></button>
+        <button data-tool="upgrade">⬆ Upgrade <kbd>7</kbd></button>
         <span class="spacer"></span>
         <button id="btn-save">💾 Save</button>
         <button id="btn-load">📂 Load</button>
@@ -38,39 +39,42 @@
         <aside id="sidepanel">
           <nav id="paneltabs">
             <button data-tab="info">Info</button>
-            <button data-tab="trains">Trains</button>
+            <button data-tab="trains">Fleet</button>
+            <button data-tab="economy">Cargo</button>
             <button data-tab="finance">Finance</button>
+            <button data-tab="rankings">Rivals</button>
           </nav>
           <div id="panel-context"></div>
-          <h3 class="messages-title">Messages</h3>
+          <h3 class="messages-title">News</h3>
           <div id="messages"></div>
         </aside>
       </main>
       <div id="help-overlay" class="hidden">
         <div class="help-card">
-          <h2>🚂 Rail Frontier — How to Play</h2>
-          <p>You run a young railway company. Connect towns and industries, move
-          passengers and freight, and grow your empire.</p>
+          <h2>🚂 Rail Frontier — Railroad Tycoon</h2>
+          <p>Found a railroad company, connect towns and industries, run freight
+          and passengers, and out-grow your rivals across the decades.</p>
           <ol>
-            <li><b>Find an opportunity</b> — two towns close together, a coal mine
-            (⛏) near a power plant (⚡), or a lumber camp (🪵) near a sawmill (🪚).</li>
-            <li><b>Build stations</b> (key <kbd>3</kbd>) next to each — a station
-            serves everything within 3 tiles (shown while placing).</li>
-            <li><b>Lay track</b> (key <kbd>2</kbd>) connecting the stations.
-            Click-drag to paint; trains run diagonals automatically. Track over
-            water builds a bridge (expensive!).</li>
-            <li><b>Buy a train</b> (key <kbd>4</kbd>): pick a type, click your
-            stations in order, then <i>Buy &amp; Start</i>.</li>
-            <li>Trains loop their stops earning money on every delivery.
-            Sawmills turn delivered wood into goods for towns, and well-served
-            towns grow — more passengers, more money.</li>
-            <li>Short on cash? <b>Borrow from the bank</b> in the Finance tab —
-            watch the monthly interest.</li>
+            <li><b>Find profitable routes</b> — inspect towns and industries
+            (Info tab) to see what each produces and demands. Cargo flows through
+            chains: coal + iron → <b>steel</b> → goods; logs → lumber; grain or
+            livestock → food; ports import goods and export raw materials.</li>
+            <li><b>Build stations</b> (<kbd>3</kbd>) — pick a tier (Depot,
+            Station, Terminal); bigger tiers reach further and hold more cargo.
+            <kbd>7</kbd> upgrades an existing one.</li>
+            <li><b>Lay track</b> (<kbd>2</kbd>) connecting them. Trains run
+            diagonals automatically; track over water builds a bridge.</li>
+            <li><b>Buy a locomotive</b> (<kbd>4</kbd>) — only era-appropriate
+            engines are for sale, and new, faster ones arrive as the years pass.
+            Pick stops, then <i>Buy &amp; Start</i>.</li>
+            <li><b>Manage the company</b> — issue bonds in the Finance tab, ride
+            the boom/bust economy, and watch the Rivals tab: competitors expand
+            and claim territory (dashed lines). Connect a contested town before
+            they take its traffic.</li>
           </ol>
-          <p>Pan with right-drag / WASD / arrows. Zoom with the mouse wheel.
-          Click the minimap to jump around. <kbd>F</kbd> follows the selected
-          train. <kbd>Space</kbd> pauses. <kbd>Esc</kbd> cancels. The game
-          autosaves every two minutes.</p>
+          <p>Pan with right-drag / WASD. Zoom with the wheel. Click the minimap
+          to jump. <kbd>F</kbd> follows a train. <kbd>Space</kbd> pauses. The
+          game autosaves every two minutes.</p>
           <p class="hint">Click anywhere to close. Press <kbd>H</kbd> to reopen.</p>
         </div>
       </div>

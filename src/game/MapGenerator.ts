@@ -1,24 +1,53 @@
+import { emptyCargoRecord } from './cargo';
 import { mulberry32 } from './rng';
-import { GameMap, Industry, Terrain, Town } from './types';
+import { GameMap, Industry, IndustryKind, Terrain, Town } from './types';
 
-export const MAP_WIDTH = 164;
-export const MAP_HEIGHT = 140;
+export const MAP_WIDTH = 260;
+export const MAP_HEIGHT = 200;
 
-const TOWN_TARGET = 18;
-const TOWN_MIN = 15;
-const MINES = 4;
-const PLANTS = 4;
-const LUMBER_CAMPS = 3;
-const SAWMILLS = 3;
+const TOWN_TARGET = 32;
+const TOWN_MIN = 24;
 
 const NAME_PREFIX = [
   'Ash', 'Brook', 'Clay', 'Dun', 'Elder', 'Fair', 'Glen', 'Haver', 'Iron',
   'Kings', 'Lark', 'Mill', 'North', 'Oak', 'Pine', 'Quarry', 'Raven', 'Stone',
-  'Thorn', 'Vale', 'West', 'Wolf', 'York', 'Salt', 'Cedar', 'Frost',
+  'Thorn', 'Vale', 'West', 'Wolf', 'York', 'Salt', 'Cedar', 'Frost', 'Gold',
+  'Red', 'Silver', 'Bear', 'Eagle', 'Maple', 'Birch', 'Granite', 'River',
 ];
 const NAME_SUFFIX = [
   'ford', 'ton', 'bury', 'field', 'haven', 'wick', 'dale', 'mouth', 'bridge',
-  'gate', 'stead', 'port', 'crest', 'hollow', 'march',
+  'gate', 'stead', 'port', 'crest', 'hollow', 'march', 'ridge', 'valley', 'falls',
+];
+
+const INDUSTRY_SUFFIX: Record<IndustryKind, string> = {
+  coalMine: 'Colliery',
+  ironMine: 'Iron Mine',
+  oilWell: 'Oil Field',
+  lumberCamp: 'Lumber Camp',
+  farm: 'Farm',
+  ranch: 'Ranch',
+  steelMill: 'Steel Works',
+  factory: 'Factory',
+  sawmill: 'Sawmill',
+  mill: 'Mill',
+  powerPlant: 'Power Co.',
+  port: 'Port',
+};
+
+/** How many of each industry to scatter across the (large) map. */
+const INDUSTRY_PLAN: { kind: IndustryKind; count: number; terrain: Terrain | 'coast' | 'any' }[] = [
+  { kind: 'coalMine', count: 6, terrain: Terrain.Hill },
+  { kind: 'ironMine', count: 4, terrain: Terrain.Hill },
+  { kind: 'oilWell', count: 3, terrain: 'any' },
+  { kind: 'lumberCamp', count: 5, terrain: Terrain.Forest },
+  { kind: 'farm', count: 6, terrain: Terrain.Grass },
+  { kind: 'ranch', count: 4, terrain: Terrain.Grass },
+  { kind: 'steelMill', count: 3, terrain: 'any' },
+  { kind: 'factory', count: 4, terrain: 'any' },
+  { kind: 'sawmill', count: 4, terrain: 'any' },
+  { kind: 'mill', count: 4, terrain: Terrain.Grass },
+  { kind: 'powerPlant', count: 4, terrain: 'any' },
+  { kind: 'port', count: 3, terrain: 'coast' },
 ];
 
 export interface GeneratedWorld {
@@ -58,15 +87,15 @@ export function generateMap(seed: number): GeneratedWorld {
   const w = MAP_WIDTH;
   const h = MAP_HEIGHT;
 
-  const elev1 = valueNoise(rand, w, h, 28);
-  const elev2 = valueNoise(rand, w, h, 9);
-  const moisture = valueNoise(rand, w, h, 13);
+  const elev1 = valueNoise(rand, w, h, 36);
+  const elev2 = valueNoise(rand, w, h, 11);
+  const moisture = valueNoise(rand, w, h, 16);
 
   const terrain = new Array<number>(w * h);
   for (let i = 0; i < w * h; i++) {
     const e = elev1[i] * 0.65 + elev2[i] * 0.35;
     if (e < 0.34) terrain[i] = Terrain.Water;
-    else if (e > 0.68) terrain[i] = Terrain.Hill;
+    else if (e > 0.69) terrain[i] = Terrain.Hill;
     else if (moisture[i] > 0.62) terrain[i] = Terrain.Forest;
     else terrain[i] = Terrain.Grass;
   }
@@ -76,6 +105,12 @@ export function generateMap(seed: number): GeneratedWorld {
   const idx = (x: number, y: number) => y * w + x;
   const inBounds = (x: number, y: number) => x >= 2 && y >= 2 && x < w - 2 && y < h - 2;
   const isLand = (x: number, y: number) => terrain[idx(x, y)] !== Terrain.Water;
+  const isCoast = (x: number, y: number) =>
+    isLand(x, y) &&
+    (terrain[idx(x + 1, y)] === Terrain.Water ||
+      terrain[idx(x - 1, y)] === Terrain.Water ||
+      terrain[idx(x, y + 1)] === Terrain.Water ||
+      terrain[idx(x, y - 1)] === Terrain.Water);
 
   let nextId = 1;
   const towns: Town[] = [];
@@ -83,7 +118,7 @@ export function generateMap(seed: number): GeneratedWorld {
   const usedNames = new Set<string>();
 
   const makeName = (): string => {
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 80; i++) {
       const name =
         NAME_PREFIX[Math.floor(rand() * NAME_PREFIX.length)] +
         NAME_SUFFIX[Math.floor(rand() * NAME_SUFFIX.length)];
@@ -103,7 +138,8 @@ export function generateMap(seed: number): GeneratedWorld {
       x,
       y,
       name: makeName(),
-      population: 200 + Math.floor(rand() * 900),
+      population: 250 + Math.floor(rand() * 1100),
+      serviceLevel: 0,
     });
   };
 
@@ -114,11 +150,11 @@ export function generateMap(seed: number): GeneratedWorld {
     inBounds(x, y) && isLand(x, y) && !occupied.has(idx(x, y));
 
   // Place towns: random attempts, relaxing spacing if the map is tight.
-  let minDist = 11;
+  let minDist = 13;
   let attempts = 0;
-  while (towns.length < TOWN_TARGET && attempts < 8000) {
+  while (towns.length < TOWN_TARGET && attempts < 16000) {
     attempts++;
-    if (attempts % 1500 === 0 && minDist > 6) minDist--;
+    if (attempts % 2500 === 0 && minDist > 7) minDist--;
     const x = 2 + Math.floor(rand() * (w - 4));
     const y = 2 + Math.floor(rand() * (h - 4));
     if (!canHost(x, y) || terrain[idx(x, y)] === Terrain.Hill) continue;
@@ -135,7 +171,6 @@ export function generateMap(seed: number): GeneratedWorld {
         const by = Math.round(a.y + Math.sin(angle) * dist);
         if (canHost(bx, by)) placeTown(bx, by);
       }
-      // Force one if the neighbourhood is all water.
       if (towns.length < 2) {
         const bx = Math.min(w - 3, a.x + 7);
         const by = a.y;
@@ -144,7 +179,6 @@ export function generateMap(seed: number): GeneratedWorld {
       }
     }
   }
-  // Hard guarantee of TOWN_MIN towns even on pathological seeds.
   while (towns.length < TOWN_MIN) {
     const x = 2 + Math.floor(rand() * (w - 4));
     const y = 2 + Math.floor(rand() * (h - 4));
@@ -154,108 +188,78 @@ export function generateMap(seed: number): GeneratedWorld {
     placeTown(x, y);
   }
 
-  const placeIndustry = (x: number, y: number, kind: Industry['kind'], name: string) => {
-    if (terrain[idx(x, y)] === Terrain.Water) terrain[idx(x, y)] = Terrain.Grass;
+  const placeIndustry = (x: number, y: number, kind: IndustryKind): Industry => {
+    if (terrain[idx(x, y)] === Terrain.Water && kind !== 'port') terrain[idx(x, y)] = Terrain.Grass;
     occupied.add(idx(x, y));
-    industries.push({ id: nextId++, x, y, kind, name });
+    const ind: Industry = {
+      id: nextId++,
+      x,
+      y,
+      kind,
+      name: `${makeName()} ${INDUSTRY_SUFFIX[kind]}`,
+      stock: emptyCargoRecord(),
+      activity: 0,
+    };
+    industries.push(ind);
+    return ind;
   };
 
-  // First power plant near the first town, first coal mine within reach of the
-  // plant — a guaranteed coal chain opportunity.
+  const terrainMatch = (x: number, y: number, want: Terrain | 'coast' | 'any'): boolean => {
+    if (want === 'any') return true;
+    if (want === 'coast') return isCoast(x, y);
+    return terrain[idx(x, y)] === want;
+  };
+
+  // Place an industry of a kind near an anchor point (for guaranteed chains).
+  const placeNear = (kind: IndustryKind, ax: number, ay: number, minR: number, maxR: number): Industry | null => {
+    for (let tries = 0; tries < 400; tries++) {
+      const angle = rand() * Math.PI * 2;
+      const dist = minR + rand() * (maxR - minR);
+      const x = Math.round(ax + Math.cos(angle) * dist);
+      const y = Math.round(ay + Math.sin(angle) * dist);
+      if (kind === 'port' ? isCoast(x, y) && !occupied.has(idx(x, y)) : canHost(x, y)) {
+        return placeIndustry(x, y, kind);
+      }
+    }
+    // forced fallback on land
+    for (let tries = 0; tries < 400; tries++) {
+      const x = Math.max(2, Math.min(w - 3, ax + Math.round((rand() - 0.5) * maxR * 2)));
+      const y = Math.max(2, Math.min(h - 3, ay + Math.round((rand() - 0.5) * maxR * 2)));
+      if (canHost(x, y)) return placeIndustry(x, y, kind);
+    }
+    return null;
+  };
+
+  // Guaranteed early chains around the anchor town so the player always has a
+  // profitable opening: a coal→power run and a farm→mill→town food run.
   const anchor = towns[0];
-  let plant0: Industry | null = null;
-  for (let tries = 0; tries < 300 && !plant0; tries++) {
-    const x = anchor.x + Math.round((rand() - 0.5) * 12);
-    const y = anchor.y + Math.round((rand() - 0.5) * 12);
-    if (canHost(x, y)) {
-      placeIndustry(x, y, 'powerPlant', `${anchor.name} Power Co.`);
-      plant0 = industries[industries.length - 1];
-    }
-  }
-  if (!plant0) {
-    const x = Math.min(w - 3, anchor.x + 3);
-    placeIndustry(x, anchor.y + 2 < h - 2 ? anchor.y + 2 : anchor.y - 2, 'powerPlant', `${anchor.name} Power Co.`);
-    plant0 = industries[industries.length - 1];
-  }
-  let mine0 = false;
-  for (let tries = 0; tries < 400 && !mine0; tries++) {
-    const angle = rand() * Math.PI * 2;
-    const dist = 9 + rand() * 9;
-    const x = Math.round(plant0.x + Math.cos(angle) * dist);
-    const y = Math.round(plant0.y + Math.sin(angle) * dist);
-    if (canHost(x, y)) {
-      placeIndustry(x, y, 'coalMine', `${makeName()} Colliery`);
-      mine0 = true;
-    }
-  }
-  if (!mine0) {
-    const x = Math.max(2, plant0.x - 10);
-    placeIndustry(x, plant0.y, 'coalMine', `${makeName()} Colliery`);
-  }
+  placeNear('powerPlant', anchor.x, anchor.y, 4, 9);
+  placeNear('coalMine', anchor.x, anchor.y, 9, 16);
+  placeNear('mill', anchor.x, anchor.y, 4, 9);
+  placeNear('farm', anchor.x, anchor.y, 8, 15);
 
-  // Remaining industries scattered across the map.
-  let plants = 1;
-  let mines = 1;
-  let indAttempts = 0;
-  while ((plants < PLANTS || mines < MINES) && indAttempts < 6000) {
-    indAttempts++;
-    const x = 2 + Math.floor(rand() * (w - 4));
-    const y = 2 + Math.floor(rand() * (h - 4));
-    if (!canHost(x, y)) continue;
-    if (mines < MINES && (terrain[idx(x, y)] === Terrain.Hill || rand() < 0.4)) {
-      placeIndustry(x, y, 'coalMine', `${makeName()} Colliery`);
-      mines++;
-    } else if (plants < PLANTS) {
-      // Plants prefer to be near a town so deliveries pair with passenger runs.
-      const nearTown = towns.some(
-        (t) => Math.max(Math.abs(t.x - x), Math.abs(t.y - y)) <= 8,
-      );
-      if (!nearTown && indAttempts < 4000) continue;
-      placeIndustry(x, y, 'powerPlant', `${makeName()} Power Co.`);
-      plants++;
+  // Remaining industries from the plan, biased to preferred terrain.
+  const remaining: Record<string, number> = {};
+  for (const p of INDUSTRY_PLAN) {
+    remaining[p.kind] = p.count - industries.filter((i) => i.kind === p.kind).length;
+  }
+  for (const p of INDUSTRY_PLAN) {
+    let placed = 0;
+    const need = Math.max(0, remaining[p.kind]);
+    let tries = 0;
+    while (placed < need && tries < 9000) {
+      tries++;
+      const x = 2 + Math.floor(rand() * (w - 4));
+      const y = 2 + Math.floor(rand() * (h - 4));
+      if (p.terrain === 'coast') {
+        if (!isCoast(x, y) || occupied.has(idx(x, y))) continue;
+      } else {
+        if (!canHost(x, y)) continue;
+        if (tries < 6000 && !terrainMatch(x, y, p.terrain)) continue;
+      }
+      placeIndustry(x, y, p.kind);
+      placed++;
     }
-  }
-
-  // Wood chain: lumber camps prefer forest, each sawmill sits within reach of
-  // a camp (and ideally near a town for the onward goods run).
-  let camps = 0;
-  let woodAttempts = 0;
-  while (camps < LUMBER_CAMPS && woodAttempts < 6000) {
-    woodAttempts++;
-    const x = 2 + Math.floor(rand() * (w - 4));
-    const y = 2 + Math.floor(rand() * (h - 4));
-    if (!canHost(x, y)) continue;
-    if (terrain[idx(x, y)] !== Terrain.Forest && woodAttempts < 4000) continue;
-    placeIndustry(x, y, 'lumberCamp', `${makeName()} Lumber Camp`);
-    camps++;
-  }
-  // Fallback so the chain always exists.
-  while (camps < 1) {
-    const x = 2 + Math.floor(rand() * (w - 4));
-    const y = 2 + Math.floor(rand() * (h - 4));
-    if (!canHost(x, y)) continue;
-    placeIndustry(x, y, 'lumberCamp', `${makeName()} Lumber Camp`);
-    camps++;
-  }
-  const campList = industries.filter((i) => i.kind === 'lumberCamp');
-  let sawmills = 0;
-  let millAttempts = 0;
-  while (sawmills < SAWMILLS && millAttempts < 6000) {
-    millAttempts++;
-    const camp = campList[sawmills % campList.length];
-    const angle = rand() * Math.PI * 2;
-    const dist = 8 + rand() * 14;
-    const x = Math.round(camp.x + Math.cos(angle) * dist);
-    const y = Math.round(camp.y + Math.sin(angle) * dist);
-    if (!canHost(x, y)) continue;
-    placeIndustry(x, y, 'sawmill', `${makeName()} Sawmill`);
-    sawmills++;
-  }
-  if (sawmills === 0) {
-    const camp = campList[0];
-    const x = Math.max(2, Math.min(w - 3, camp.x + 9));
-    const y = Math.max(2, Math.min(h - 3, camp.y));
-    placeIndustry(x, y, 'sawmill', `${makeName()} Sawmill`);
   }
 
   return { map, towns, industries };

@@ -1,4 +1,4 @@
-import { buildStation, buildTrack, bulldoze, addMessage } from '../game/GameState';
+import { buildStation, buildTrack, bulldoze, upgradeStation, addMessage } from '../game/GameState';
 import { GameState, Station, Train } from '../game/types';
 import { Renderer } from './Renderer';
 import { Tool, UiState } from './uiState';
@@ -27,6 +27,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   '4': 'train',
   '5': 'route',
   '6': 'bulldoze',
+  '7': 'upgrade',
 };
 
 export class InputController {
@@ -280,7 +281,19 @@ export class InputController {
         return;
       }
       case 'station': {
-        const result = buildStation(state, tile.x, tile.y);
+        const result = buildStation(state, tile.x, tile.y, ui.stationLevel);
+        if (!result.ok && result.reason) addMessage(state, result.reason);
+        return;
+      }
+      case 'upgrade': {
+        const station = state.stations.find((s) => s.x === tile.x && s.y === tile.y);
+        if (!station) {
+          addMessage(state, 'Click one of your stations to upgrade it.');
+          return;
+        }
+        ui.selected = { kind: 'station', id: station.id };
+        ui.panelTab = 'info';
+        const result = upgradeStation(state, station.id);
         if (!result.ok && result.reason) addMessage(state, result.reason);
         return;
       }

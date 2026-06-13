@@ -9,7 +9,7 @@ import {
   saveToLocalStorage,
   serialize,
 } from '../src/persistence/SaveLoad';
-import { addStation, blankState, layTrackRow } from './helpers';
+import { addStation, blankState, layTrackRow, town } from './helpers';
 
 // Minimal localStorage stub for the node test environment.
 const store = new Map<string, string>();
@@ -43,13 +43,13 @@ describe('Save/Load', () => {
 
   it('roundtrips trains and routes through localStorage', () => {
     const state = blankState(30, 12, [
-      { id: 900, x: 2, y: 5, name: 'Alpha', population: 800 },
-      { id: 901, x: 20, y: 5, name: 'Beta', population: 800 },
+      town(900, 2, 5, 'Alpha', 800),
+      town(901, 20, 5, 'Beta', 800),
     ]);
     const a = addStation(state, 3, 5, 'A');
     const b = addStation(state, 19, 5, 'B');
     layTrackRow(state, 4, 18, 5);
-    expect(buyTrain(state, 'local', [a.id, b.id]).ok).toBe(true);
+    expect(buyTrain(state, 'american', [a.id, b.id]).ok).toBe(true);
     update(state, 2); // train is mid-journey with real path state
 
     saveToLocalStorage(state);
@@ -73,7 +73,7 @@ describe('Save/Load', () => {
   });
 
   it('rejects corrupt save data gracefully', () => {
-    store.set('rail-frontier-save-v2', '{"version":99}');
+    store.set('rail-frontier-save-v3', '{"version":99}');
     expect(loadFromLocalStorage()).toBeNull();
   });
 });

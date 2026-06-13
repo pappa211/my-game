@@ -1,12 +1,7 @@
+import { emptyCargoRecord } from '../src/game/cargo';
+import { DEFAULT_STATION_LEVEL } from '../src/game/config';
 import { createState, tileIndex } from '../src/game/GameState';
-import {
-  emptyWaiting,
-  GameMap,
-  GameState,
-  Industry,
-  Terrain,
-  Town,
-} from '../src/game/types';
+import { GameMap, GameState, Industry, Terrain, Town } from '../src/game/types';
 
 /** A flat all-grass world for deterministic unit tests. */
 export function blankState(
@@ -20,7 +15,8 @@ export function blankState(
     height,
     terrain: new Array(width * height).fill(Terrain.Grass),
   };
-  return createState(map, towns, industries, 1);
+  // 1880 by default so the 'american' / 'mogul' engines are buyable in tests.
+  return createState(map, towns, industries, 1, { startYear: 1880, startCash: 26000 });
 }
 
 /** Lay a straight horizontal run of track from x0..x1 (inclusive) at row y. */
@@ -30,14 +26,25 @@ export function layTrackRow(state: GameState, x0: number, x1: number, y: number)
   }
 }
 
-export function addStation(state: GameState, x: number, y: number, name: string) {
+export function addStation(state: GameState, x: number, y: number, name: string, level = DEFAULT_STATION_LEVEL) {
   const station = {
     id: state.nextId++,
     x,
     y,
+    level,
     name,
-    waiting: emptyWaiting(),
+    waiting: emptyCargoRecord(),
   };
   state.stations.push(station);
   return station;
+}
+
+/** Build a minimal town with the required fields. */
+export function town(id: number, x: number, y: number, name: string, population: number): Town {
+  return { id, x, y, name, population, serviceLevel: 0 };
+}
+
+/** Build a minimal industry with the required fields. */
+export function industry(id: number, x: number, y: number, kind: Industry['kind'], name: string): Industry {
+  return { id, x, y, kind, name, stock: emptyCargoRecord(), activity: 0 };
 }

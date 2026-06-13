@@ -1,8 +1,8 @@
 import { GameState } from '../game/types';
 
-const SAVE_KEY = 'rail-frontier-save-v2';
-const AUTOSAVE_KEY = 'rail-frontier-autosave-v2';
-const SAVE_VERSION = 2;
+const SAVE_KEY = 'rail-frontier-save-v3';
+const AUTOSAVE_KEY = 'rail-frontier-autosave-v3';
+const SAVE_VERSION = 3;
 
 interface SaveFile {
   version: number;
