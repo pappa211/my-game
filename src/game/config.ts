@@ -28,6 +28,37 @@ export const MAIL_RATE = 0.007;
 export const GROWTH_PER_DELIVERY = 0.05;
 export const TOWN_MAX_POP = 9000;
 
+// ---- town tiers ----
+// Towns visibly upgrade as they grow; larger tiers generate more
+// passenger/mail traffic (the volume multiplier) and read as bigger goals.
+export interface TownTier {
+  name: string;
+  /** minimum population to reach this tier */
+  minPop: number;
+  /** multiplier on passenger/mail generation */
+  trafficMul: number;
+}
+
+export const TOWN_TIERS: TownTier[] = [
+  { name: 'Village', minPop: 0, trafficMul: 1.0 },
+  { name: 'Town', minPop: 500, trafficMul: 1.0 },
+  { name: 'City', minPop: 2000, trafficMul: 1.15 },
+  { name: 'Metropolis', minPop: 5000, trafficMul: 1.3 },
+];
+
+/** The tier a town of this population currently occupies. */
+export function townTier(population: number): TownTier {
+  let tier = TOWN_TIERS[0];
+  for (const t of TOWN_TIERS) if (population >= t.minPop) tier = t;
+  return tier;
+}
+
+/** The next tier up, or null if already the largest. */
+export function nextTownTier(population: number): TownTier | null {
+  const i = TOWN_TIERS.indexOf(townTier(population));
+  return TOWN_TIERS[i + 1] ?? null;
+}
+
 // ---- station tiers ----
 export interface StationTier {
   level: number;

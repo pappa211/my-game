@@ -60,6 +60,8 @@ export function buyTrain(state: GameState, typeId: string, stops: number[]): Tra
     loadTimer: LOAD_DAYS,
     cargo: [],
     earnings: 0,
+    monthRevenue: 0,
+    revenueHistory: [],
     builtDay: state.day,
     x: home.x,
     y: home.y,

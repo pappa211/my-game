@@ -5,6 +5,7 @@ import {
   PASSENGER_RATE,
   stationTier,
   TOWN_MAX_POP,
+  townTier,
   trainType,
 } from './config';
 import {
@@ -100,8 +101,10 @@ export function generateProduction(state: GameState, dtDays: number): void {
     if (pressure > 0 && stationsCovering(state, town.x, town.y).length === 0) {
       factor = 1 - pressure;
     }
-    deposit(state, town.x, town.y, 'passengers', town.population * PASSENGER_RATE * dtDays * factor);
-    deposit(state, town.x, town.y, 'mail', town.population * MAIL_RATE * dtDays * factor);
+    // Larger towns generate proportionally more traffic (tier multiplier).
+    const mul = townTier(town.population).trafficMul;
+    deposit(state, town.x, town.y, 'passengers', town.population * PASSENGER_RATE * dtDays * factor * mul);
+    deposit(state, town.x, town.y, 'mail', town.population * MAIL_RATE * dtDays * factor * mul);
     // service decays slowly; deliveries push it back up
     town.serviceLevel = Math.max(0, town.serviceLevel - 0.02 * dtDays);
   }
@@ -156,9 +159,11 @@ export function unloadAtStation(state: GameState, train: Train, station: Station
     } else {
       const towns = townsServed(state, station);
       const growth = (batch.qty * GROWTH_PER_DELIVERY) / Math.max(1, towns.length);
+      const each = batch.qty / Math.max(1, towns.length);
       for (const t of towns) {
         t.population = Math.min(TOWN_MAX_POP, t.population + growth);
         t.serviceLevel = Math.min(1, t.serviceLevel + 0.05);
+        t.deliveredThisMonth = (t.deliveredThisMonth ?? 0) + each;
       }
     }
   }
@@ -166,6 +171,7 @@ export function unloadAtStation(state: GameState, train: Train, station: Station
   if (revenue > 0) {
     earn(state, revenue);
     train.earnings += revenue;
+    train.monthRevenue = (train.monthRevenue ?? 0) + revenue;
   }
   return revenue;
 }

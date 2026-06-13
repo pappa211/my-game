@@ -56,7 +56,11 @@ export function createState(
   opts: CreateOpts = {},
 ): GameState {
   // Normalise so test fixtures and old worlds always have the new fields.
-  for (const t of towns) if (t.serviceLevel === undefined) t.serviceLevel = 0;
+  for (const t of towns) {
+    if (t.serviceLevel === undefined) t.serviceLevel = 0;
+    if (t.deliveredThisMonth === undefined) t.deliveredThisMonth = 0;
+    if (t.deliveryHistory === undefined) t.deliveryHistory = [];
+  }
   for (const i of industries) {
     if (!i.stock) i.stock = emptyCargoRecord();
     if (i.activity === undefined) i.activity = 0;

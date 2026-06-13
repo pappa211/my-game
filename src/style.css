@@ -428,6 +428,230 @@ table.fin.cargo td:last-child {
   border-radius: 3px;
 }
 
+/* generic positive / negative figures */
+.pos {
+  color: #9fdcab;
+}
+
+.neg {
+  color: #ff7a6e;
+}
+
+.dim {
+  color: #93a0b4;
+}
+
+/* engine comparison cards */
+button.type.engine {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engine-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.engine-role {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #1b2230;
+  background: #8fc6f0;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.engine-for {
+  color: #93a0b4 !important;
+  font-style: italic;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.badge {
+  font-size: 10px;
+  background: #243044;
+  border: 1px solid #36465c;
+  border-radius: 3px;
+  padding: 0 5px;
+  color: #cfe0ff;
+}
+
+/* route economics card */
+.route-card {
+  background: #141a23;
+  border: 1px solid #2c3442;
+  border-left: 3px solid #3fae6a;
+  border-radius: 5px;
+  padding: 7px 9px;
+  margin: 8px 0;
+}
+
+.route-card.bad {
+  border-left-color: #c05548;
+  color: #f0b870;
+}
+
+table.route-fin {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+table.route-fin td {
+  padding: 2px 0;
+}
+
+table.route-fin td:last-child {
+  text-align: right;
+}
+
+.flows {
+  margin: 6px 0 2px;
+}
+
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 2px 0;
+  border-top: 1px solid #232b38;
+}
+
+.flow-route {
+  flex: 1;
+  color: #aeb9cc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-qty {
+  font-variant-numeric: tabular-nums;
+  color: #cdd6e4;
+}
+
+.chain-ok {
+  color: #9fdcab;
+  font-size: 12px;
+  margin: 5px 0 2px;
+}
+
+/* opportunity hints */
+.opps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.opp {
+  font-size: 12px;
+  padding: 3px 6px;
+  background: #161d27;
+  border: 1px solid #232b38;
+  border-radius: 4px;
+}
+
+.opp-rate {
+  float: right;
+  color: #9fdcab;
+  font-variant-numeric: tabular-nums;
+}
+
+.opp-to {
+  color: #aeb9cc;
+  margin-top: 1px;
+}
+
+/* town tier badge, progress bar and delivery sparkline */
+.tier-tag {
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+  background: #3a5f9e;
+  color: #eaf1ff;
+  border-radius: 3px;
+  padding: 1px 7px;
+  margin-left: 4px;
+}
+
+.tier-bar {
+  height: 6px;
+  background: #232b38;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 2px 0;
+}
+
+.tier-bar > div {
+  height: 100%;
+  background: linear-gradient(#5a9bd8, #3a5f9e);
+}
+
+.spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  padding: 3px;
+  background: #141a23;
+  border: 1px solid #2c3442;
+  border-radius: 4px;
+}
+
+.spark-bar {
+  flex: 1;
+  min-height: 2px;
+  background: #3fae6a;
+  border-radius: 1px 1px 0 0;
+}
+
+/* fleet "by route" rows and cargo network signals */
+.routes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.route-row,
+.signal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid #232b38;
+}
+
+.route-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal {
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+.signal .dim,
+.signal .warn-text {
+  margin-left: auto;
+  text-align: right;
+}
+
 #help-overlay {
   position: fixed;
   inset: 0;

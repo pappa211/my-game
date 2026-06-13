@@ -1,11 +1,26 @@
+import {
+  analyzeRoute,
+  demandedHere,
+  missingInputs,
+  oversupply,
+  RouteAnalysis,
+  shippingOpportunities,
+  unservedDemand,
+} from '../game/Analysis';
 import { CARGOS, cargoDef } from '../game/cargo';
 import {
   availableTrainTypes,
+  GROWTH_PER_DELIVERY,
   LOAN_INTEREST_YEARLY,
   LOAN_STEP,
+  MAIL_RATE,
   MONTH_DAYS,
+  nextTownTier,
+  PASSENGER_RATE,
   STATION_TIERS,
   stationTier,
+  TOWN_MAX_POP,
+  townTier,
   TRACK_COST,
   TRAIN_SELL_FACTOR,
   trainType,
@@ -16,6 +31,7 @@ import {
   companyValue,
   industriesServed,
   stationRadius,
+  stationsCovering,
   townsServed,
 } from '../game/Economy';
 import { getStation, hasTrack, loanLimit, terrainAt } from '../game/GameState';
@@ -23,9 +39,10 @@ import {
   industryDef,
   industryInputs,
   industryOutputs,
+  TOWN_DEMANDS,
 } from '../game/industries';
-import { rankings } from '../game/Rivals';
-import { currentYear, GameState, Terrain, Train } from '../game/types';
+import { rankings, rivalPressure } from '../game/Rivals';
+import { currentYear, GameState, Terrain, Town, Train, TrainTypeDef } from '../game/types';
 import { PanelTab, Tool, UiState } from './uiState';
 
 const TERRAIN_NAMES: Record<number, string> = {
@@ -96,6 +113,8 @@ export class HUD {
   private els: Record<string, HTMLElement> = {};
   private lastPanelHtml = '';
   private lastMessagesHtml = '';
+  /** Memo for the route preview so Dijkstra doesn't re-run every frame. */
+  private routeMemo: { key: string; analysis: RouteAnalysis } | null = null;
 
   constructor(getState: () => GameState, ui: UiState, actions: HudActions) {
     this.getState = getState;
@@ -230,20 +249,13 @@ export class HUD {
           <p><b>Waiting:</b><br>${waiting}</p>
           <p>Serves towns: ${escapeHtml(towns)}</p>
           <p>Serves industries: ${escapeHtml(inds)}</p>
+          ${this.opportunitiesHtml(state, s.x, s.y, stationRadius(s))}
           ${upBtn}`;
       }
       case 'town': {
         const t = state.towns.find((t) => t.id === (ui.selected as { id: number }).id);
         if (!t) return this.toolHtml();
-        const contested = state.rivals.some((r) =>
-          r.links.some((l) => l.a === t.id || l.b === t.id),
-        );
-        const service = Math.round(t.serviceLevel * 100);
-        return `<h3>🏘 ${escapeHtml(t.name)}</h3>
-          <p>Population: ${Math.floor(t.population).toLocaleString('en-US')}</p>
-          <p>Service rating: ${service}%</p>
-          <p>Wants: passengers, mail, goods, food, lumber. Demanded deliveries grow the town.</p>
-          ${contested ? '<p class="warn-text">⚠ A rival railroad is courting this town — connect it before they take the traffic.</p>' : ''}`;
+        return this.townHtml(state, t);
       }
       case 'industry': {
         const i = state.industries.find((i) => i.id === (ui.selected as { id: number }).id);
@@ -256,8 +268,13 @@ export class HUD {
           .filter((e) => e.n > 0)
           .map((e) => `${cargoDef(e.c).label} ${e.n}`)
           .join(', ') || '—';
+        const miss = def.recipe ? missingInputs(i, def) : [];
+        const idle = miss.length > 0
+          ? `<p class="warn-text">⚠ Idle — needs ${miss.map((m) => cargoDef(m).label.toLowerCase()).join(' and ')}.</p>`
+          : '';
         return `<h3>${def.icon} ${escapeHtml(i.name)}</h3>
           <p>${def.label}</p>
+          ${idle}
           ${ins ? `<p><b>Wants:</b> ${ins}</p>` : ''}
           ${outs ? `<p><b>Ships:</b> ${outs}</p>` : ''}
           ${def.recipe ? `<p>Stockpiled inputs: ${stock}</p><p>Activity: ${Math.round(i.activity * 100)}%</p>` : ''}`;
@@ -313,28 +330,189 @@ export class HUD {
       .join('');
     const stopsHtml = stops
       ? `<ol class="stops">${stops}</ol>`
-      : '<p class="hint">No stops yet — click stations on the map.</p>';
+      : '<p class="hint">No stops yet — click stations on the map to plan the loop.</p>';
     if (draft.mode === 'buy') {
       const year = currentYear(state);
       const avail = availableTrainTypes(year);
-      const types = avail.map(
-        (t) =>
-          `<button data-action="set-type" data-type="${t.id}" class="type ${draft.typeId === t.id ? 'active' : ''}">
-            ${swatch(t.color)}${t.name}<br>
-            <small>${money(t.cost)} · cap ${t.capacity} · spd ${t.speed} · ${Math.round(t.reliability * 100)}% rel · ${money(t.runningCost)}/day</small>
-          </button>`,
-      ).join('');
-      return `<h3>🚆 Buy Locomotive · ${year}</h3>${types}${stopsHtml}
+      const preview = this.routePreviewHtml(state, draft.stops, draft.typeId);
+      return `<h3>🚆 Buy Locomotive · ${year}</h3>
+        ${this.engineComparisonHtml(avail, draft.typeId)}
+        ${stopsHtml}${preview}
         <button class="primary" data-action="confirm-draft" ${draft.stops.length < 2 ? 'disabled' : ''}>Buy &amp; Start</button>
         <button data-action="clear-draft">Clear</button>`;
     }
     const train = state.trains.find((t) => t.id === draft.trainId);
     if (!train) {
-      return `<h3>🗺 Assign Route</h3><p class="hint">Click a train on the map to select it.</p>`;
+      return `<h3>🗺 Assign Route</h3><p class="hint">Click a train on the map to select it, then click stations to plan its new loop.</p>`;
     }
-    return `<h3>🗺 Route for ${escapeHtml(train.name)}</h3>${stopsHtml}
+    const preview = this.routePreviewHtml(state, draft.stops, train.typeId);
+    return `<h3>🗺 Route for ${escapeHtml(train.name)}</h3>
+      <p class="hint">${swatch(trainType(train.typeId).color)}${trainType(train.typeId).name} · cap ${trainType(train.typeId).capacity}</p>
+      ${stopsHtml}${preview}
       <button class="primary" data-action="confirm-draft" ${draft.stops.length < 2 ? 'disabled' : ''}>Assign Route</button>
       <button data-action="clear-draft">Clear</button>`;
+  }
+
+  /** Gameplay role of an engine, so the player sees why one beats another. */
+  private engineRole(t: TrainTypeDef): { role: string; bestFor: string } {
+    if (t.capacity >= 110 && t.speed < 10) return { role: 'Heavy freight', bestFor: 'bulk hauls: coal, ore, grain' };
+    if (t.speed >= 13) return { role: 'Express', bestFor: 'passengers & mail' };
+    if (t.reliability >= 0.93 && t.capacity >= 120) return { role: 'Workhorse', bestFor: 'reliable long hauls' };
+    if (t.speed >= 11) return { role: 'Fast mixed', bestFor: 'fast freight or people' };
+    if (t.capacity >= 70) return { role: 'Freight', bestFor: 'general freight' };
+    return { role: 'Branch-line', bestFor: 'cheap, short routes' };
+  }
+
+  /** Side-by-side engine picker with role tags and best-in-class badges. */
+  private engineComparisonHtml(avail: TrainTypeDef[], selectedId: string): string {
+    if (avail.length === 0) return '<p class="hint">No engines are for sale in this era.</p>';
+    const fastest = Math.max(...avail.map((t) => t.speed));
+    const biggest = Math.max(...avail.map((t) => t.capacity));
+    const toughest = Math.max(...avail.map((t) => t.reliability));
+    const cheapest = Math.min(...avail.map((t) => t.cost));
+    return avail
+      .map((t) => {
+        const { role, bestFor } = this.engineRole(t);
+        const badges = [
+          t.speed === fastest ? '<span class="badge">⚡ fastest</span>' : '',
+          t.capacity === biggest ? '<span class="badge">📦 biggest</span>' : '',
+          t.reliability === toughest ? '<span class="badge">🛡 toughest</span>' : '',
+          t.cost === cheapest ? '<span class="badge">💲 cheapest</span>' : '',
+        ].join('');
+        return `<button data-action="set-type" data-type="${t.id}" class="type engine ${selectedId === t.id ? 'active' : ''}">
+          <span class="engine-head">${swatch(t.color)}<b>${escapeHtml(t.name)}</b> <span class="engine-role">${role}</span></span>
+          <small>${money(t.cost)} · cap ${t.capacity} · spd ${t.speed} · ${Math.round(t.reliability * 100)}% rel · ${money(t.runningCost)}/day</small>
+          <small class="engine-for">Best for ${bestFor}.</small>
+          ${badges ? `<span class="badges">${badges}</span>` : ''}
+        </button>`;
+      })
+      .join('');
+  }
+
+  /** The route economics card — the heart of the route planner. */
+  private routePreviewHtml(state: GameState, stops: number[], typeId: string): string {
+    if (stops.length < 2) {
+      return '<p class="hint">Pick at least two stops to preview distance, cargo and profit.</p>';
+    }
+    // The network is static while a draft is open (the track/station tools
+    // clear the draft), so only re-run the analysis when an input changes.
+    const key = `${stops.join(',')}|${typeId}|${state.stations.length}|${Math.round(state.economy * 20)}`;
+    let a: RouteAnalysis;
+    if (this.routeMemo && this.routeMemo.key === key) {
+      a = this.routeMemo.analysis;
+    } else {
+      a = analyzeRoute(state, stops, typeId);
+      this.routeMemo = { key, analysis: a };
+    }
+    if (!a.ok) {
+      return `<div class="route-card bad"><b>⚠ ${escapeHtml(a.reason ?? 'Route not viable.')}</b></div>`;
+    }
+    const profitClass = a.monthlyProfit >= 0 ? 'pos' : 'neg';
+    const limit =
+      a.limitedBy === 'capacity'
+        ? 'train capacity (cargo is waiting)'
+        : a.limitedBy === 'supply'
+          ? 'cargo available (spare capacity)'
+          : '—';
+    const flows = a.flows
+      .slice(0, 4)
+      .map(
+        (f) =>
+          `<div class="flow">${swatch(cargoDef(f.kind).color)}${cargoDef(f.kind).label}
+            <span class="flow-route">${escapeHtml(f.fromName)} → ${escapeHtml(f.toName)}</span>
+            <span class="flow-qty">${Math.round(f.unitsPerMonth)}/mo</span></div>`,
+      )
+      .join('') || '<div class="flow hint">No cargo flows on this loop yet.</div>';
+    const chain = a.completesChain ? `<p class="chain-ok">🔗 ${escapeHtml(a.chainNote ?? 'Completes a supply chain.')}</p>` : '';
+    const warns = a.warnings
+      .map((w) => `<p class="warn-text">⚠ ${escapeHtml(w)}</p>`)
+      .join('');
+    return `<div class="route-card">
+      <table class="route-fin">
+        <tr><td>Round trip</td><td>${a.distance.toFixed(0)} tiles · ${a.tripsPerMonth.toFixed(1)}×/mo</td></tr>
+        <tr><td>Est. revenue</td><td class="pos">${money(a.monthlyRevenue)}/mo</td></tr>
+        <tr><td>Running + repairs</td><td class="neg">${money(a.monthlyRunningCost + a.monthlyRepairCost)}/mo</td></tr>
+        <tr><td><b>Est. profit</b></td><td class="${profitClass}"><b>${money(a.monthlyProfit)}/mo</b></td></tr>
+        <tr><td>Limited by</td><td>${limit}</td></tr>
+      </table>
+      <div class="flows">${flows}</div>
+      ${chain}${warns}
+    </div>`;
+  }
+
+  /** "Recommended cargo opportunities nearby" for a station or a prospective one. */
+  private opportunitiesHtml(state: GameState, x: number, y: number, radius: number): string {
+    const ships = shippingOpportunities(state, x, y, radius).slice(0, 4);
+    const wants = demandedHere(state, x, y, radius);
+    const shipRows = ships
+      .map((o) => {
+        const sinks = o.sinks.length
+          ? o.sinks.map((s) => `${escapeHtml(s.name)} <span class="dim">(${s.distance})</span>`).join(', ')
+          : '<span class="warn-text">no buyer on the map yet</span>';
+        return `<div class="opp">${swatch(cargoDef(o.kind).color)}<b>${cargoDef(o.kind).label}</b>
+          <span class="opp-rate">${o.rate.toFixed(1)}/day</span>
+          <div class="opp-to">→ ${sinks}</div></div>`;
+      })
+      .join('');
+    const wantsHtml = wants.length
+      ? `<p><b>Wants delivered:</b> ${wants.map((k) => `${swatch(cargoDef(k).color)}${cargoDef(k).label}`).join(' ')}</p>`
+      : '';
+    if (!shipRows && !wantsHtml) return '';
+    return `<h4>Opportunities</h4>
+      ${shipRows ? `<div class="opps">${shipRows}</div>` : '<p class="hint">Nothing to ship from here.</p>'}
+      ${wantsHtml}`;
+  }
+
+  /** Tiny inline bar chart for a short history series. */
+  private sparkline(values: number[]): string {
+    if (values.length === 0) return '';
+    const max = Math.max(1, ...values);
+    const bars = values
+      .map((v) => `<div class="spark-bar" style="height:${Math.max(2, Math.round((v / max) * 100))}%" title="${Math.round(v)}"></div>`)
+      .join('');
+    return `<div class="spark">${bars}</div>`;
+  }
+
+  /** Town detail panel: a long-term strategic objective with live signals. */
+  private townHtml(state: GameState, t: Town): string {
+    const tier = townTier(t.population);
+    const next = nextTownTier(t.population);
+    const mul = tier.trafficMul;
+    const pop = Math.floor(t.population);
+    const service = Math.round(t.serviceLevel * 100);
+    const covered = stationsCovering(state, t.x, t.y).length > 0;
+    const pressure = rivalPressure(state, t.id);
+    const history = t.deliveryHistory ?? [];
+    const last12 = history.reduce((s, n) => s + n, 0) + (t.deliveredThisMonth ?? 0);
+    const lastMonth = history.length ? history[history.length - 1] : (t.deliveredThisMonth ?? 0);
+    const growth = lastMonth * GROWTH_PER_DELIVERY;
+    const radius = stationTier(1).radius;
+
+    const progress = next
+      ? `<div class="tier-bar" title="${pop} / ${next.minPop} residents">
+          <div style="width:${Math.min(100, Math.round(((pop - tier.minPop) / (next.minPop - tier.minPop)) * 100))}%"></div>
+        </div>
+        <p class="hint">${Math.max(0, next.minPop - pop).toLocaleString('en-US')} more residents → <b>${next.name}</b> (×${next.trafficMul} traffic).</p>`
+      : '<p class="hint">A thriving metropolis — the largest tier.</p>';
+
+    const wantChips = TOWN_DEMANDS
+      .map((k) => `${swatch(cargoDef(k).color)}${cargoDef(k).label}`)
+      .join(' ');
+
+    return `<h3>🏘 ${escapeHtml(t.name)} <span class="tier-tag">${tier.name}</span></h3>
+      <p>Population <b>${pop.toLocaleString('en-US')}</b>${pop >= TOWN_MAX_POP ? ' (max)' : ''} · service ${service}%</p>
+      ${progress}
+      <table class="fin">
+        <tr><td>Growth</td><td class="${growth > 0 ? 'pos' : ''}">${growth > 0 ? '+' : ''}${growth.toFixed(1)} pop/mo</td></tr>
+        <tr><td>Passengers</td><td>~${(pop * PASSENGER_RATE * mul).toFixed(0)}/day</td></tr>
+        <tr><td>Mail</td><td>~${(pop * MAIL_RATE * mul).toFixed(0)}/day</td></tr>
+        <tr><td>Deliveries (12 mo)</td><td>${Math.round(last12).toLocaleString('en-US')}</td></tr>
+      </table>
+      ${history.length ? `<h4>Deliveries by month</h4>${this.sparkline(history)}` : ''}
+      <p><b>Demands:</b> ${wantChips}</p>
+      ${covered ? '' : '<p class="warn-text">⚠ Not on your network — build a station within reach to start deliveries and growth.</p>'}
+      ${pressure > 0 ? `<p class="warn-text">⚠ A rival is courting this town (−${Math.round(pressure * 100)}% traffic until you connect it).</p>` : ''}
+      ${this.opportunitiesHtml(state, t.x, t.y, radius)}`;
   }
 
   private trainHtml(state: GameState, id: number): string {
@@ -349,11 +527,17 @@ export class HUD {
       .join(' → ');
     const sellPrice = Math.round(type.cost * TRAIN_SELL_FACTOR);
     const age = Math.max(0, Math.floor((state.day - train.builtDay) / 360));
+    const m = this.trainMetrics(train);
+    const { role } = this.engineRole(type);
     return `<h3>🚆 ${escapeHtml(train.name)}</h3>
-      <p>${swatch(type.color)}${type.name} · cap ${type.capacity} · ${money(type.runningCost)}/day · age ${age}y</p>
+      <p>${swatch(type.color)}${type.name} <span class="engine-role">${role}</span> · cap ${type.capacity} · ${money(type.runningCost)}/day · age ${age}y</p>
       <p>Status: ${status}</p>
       <p>Cargo (${cargoCount(train)}/${type.capacity}):<br>${cargo}</p>
-      <p>Lifetime earnings: ${money(train.earnings)}</p>
+      <table class="fin">
+        <tr><td>Profit (last mo)</td><td class="${m.profit >= 0 ? 'pos' : 'neg'}">${money(m.profit)}/mo</td></tr>
+        <tr><td>Earnings (12 mo)</td><td>${money(m.last12)}</td></tr>
+        <tr><td>Lifetime earnings</td><td>${money(train.earnings)}</td></tr>
+      </table>
       <p>Route: ${stops}</p>
       <button data-action="toggle-follow">${this.ui.follow ? '🎥 Stop following' : '🎥 Follow train'}</button>
       <button class="danger" data-action="sell-train" data-id="${train.id}">Sell for ${money(sellPrice)}</button>`;
@@ -372,6 +556,15 @@ export class HUD {
 
   // ------------------------------------------------------------ trains tab
 
+  /** Last-full-month profit and trailing 12-month earnings for one train. */
+  private trainMetrics(train: Train): { profit: number; last12: number; lastRev: number } {
+    const hist = train.revenueHistory ?? [];
+    const lastRev = hist.length ? hist[hist.length - 1] : (train.monthRevenue ?? 0);
+    const running = trainType(train.typeId).runningCost * MONTH_DAYS;
+    const last12 = hist.reduce((s, n) => s + n, 0) + (train.monthRevenue ?? 0);
+    return { profit: lastRev - running, last12, lastRev };
+  }
+
   private trainsTabHtml(state: GameState): string {
     if (state.trains.length === 0) {
       return `<h3>🚆 Fleet</h3><p class="hint">No trains yet. Use the Buy Train tool (key 4).</p>`;
@@ -379,19 +572,53 @@ export class HUD {
     const rows = state.trains
       .map((t) => {
         const type = trainType(t.typeId);
+        const m = this.trainMetrics(t);
         const selected = this.ui.selected?.kind === 'train' && this.ui.selected.id === t.id;
         return `<button class="trainrow ${selected ? 'active' : ''} ${t.state === 'stranded' || t.state === 'broken' ? 'stranded' : ''}"
-            data-action="select-train" data-id="${t.id}">
+            data-action="select-train" data-id="${t.id}" title="Lifetime ${money(t.earnings)} · 12 mo ${money(m.last12)}">
           ${swatch(type.color)}
           <span class="trainrow-name">${escapeHtml(t.name)}</span>
           <span class="trainrow-status">${STATUS_ICON[t.state]}</span>
-          <span class="trainrow-earn">${money(t.earnings)}</span>
+          <span class="trainrow-earn ${m.profit >= 0 ? 'pos' : 'neg'}">${money(m.profit)}/mo</span>
         </button>`;
       })
       .join('');
-    const total = state.trains.reduce((s, t) => s + t.earnings, 0);
+
+    // Profit per route — trains sharing a set of stops are one route.
+    const groups = new Map<string, { name: string; count: number; profit: number; last12: number }>();
+    for (const t of state.trains) {
+      const key = [...t.stops].sort((a, b) => a - b).join(',');
+      const m = this.trainMetrics(t);
+      const g = groups.get(key);
+      if (g) {
+        g.count += 1;
+        g.profit += m.profit;
+        g.last12 += m.last12;
+      } else {
+        const names = t.stops.map((id) => getStation(state, id)?.name ?? '?');
+        const label = names.length <= 2 ? names.join(' ↔ ') : `${names[0]} +${names.length - 1}`;
+        groups.set(key, { name: label, count: 1, profit: m.profit, last12: m.last12 });
+      }
+    }
+    const routeRows = [...groups.values()]
+      .sort((a, b) => b.profit - a.profit)
+      .map(
+        (g) =>
+          `<div class="route-row"><span class="route-name">${escapeHtml(g.name)}${g.count > 1 ? ` ×${g.count}` : ''}</span>
+            <span class="${g.profit >= 0 ? 'pos' : 'neg'}">${money(g.profit)}/mo</span></div>`,
+      )
+      .join('');
+
+    const totalProfit = state.trains.reduce((s, t) => s + this.trainMetrics(t).profit, 0);
+    const total12 = state.trains.reduce((s, t) => s + this.trainMetrics(t).last12, 0);
     return `<h3>🚆 Fleet (${state.trains.length})</h3>
-      <p class="hint">Lifetime earnings shown · fleet total ${money(total)}. Click to follow.</p>${rows}`;
+      <p class="hint">Profit per train per month (last full month). Click to follow.</p>${rows}
+      <h4>Profit by route</h4>
+      <div class="routes">${routeRows}</div>
+      <table class="fin">
+        <tr><td>Fleet profit</td><td class="${totalProfit >= 0 ? 'pos' : 'neg'}">${money(totalProfit)}/mo</td></tr>
+        <tr><td>Earnings (12 mo)</td><td>${money(total12)}</td></tr>
+      </table>`;
   }
 
   // ----------------------------------------------------------- finance tab
@@ -449,12 +676,38 @@ export class HUD {
     const censusRows = Object.entries(census)
       .map(([k, n]) => `${industryDef(k as never).icon} ${industryDef(k as never).label} ×${n}`)
       .join(' · ');
+    const unmet = unservedDemand(state).slice(0, 5);
+    const over = oversupply(state).slice(0, 5);
+    const unmetHtml = unmet.length
+      ? unmet
+          .map(
+            (s) =>
+              `<div class="signal">${swatch(cargoDef(s.kind).color)}${cargoDef(s.kind).label}
+                <span class="dim">${s.count} unserved${s.example ? ` · e.g. ${escapeHtml(s.example)}` : ''}</span></div>`,
+          )
+          .join('')
+      : '<p class="hint">Every demand point is within reach of a station. 👍</p>';
+    const overHtml = over.length
+      ? over
+          .map(
+            (s) =>
+              `<div class="signal">${swatch(cargoDef(s.kind).color)}${cargoDef(s.kind).label}
+                <span class="warn-text">${Math.round(s.waiting)} stacked at ${s.pileups} station${s.pileups > 1 ? 's' : ''}</span></div>`,
+          )
+          .join('')
+      : '<p class="hint">Nothing is backing up — your trains are keeping pace. 👍</p>';
     return `<h3>📦 Cargo &amp; Traffic</h3>
       <p class="hint">Economy ${economyLabel(state.economy)} — revenue ×${state.economy.toFixed(2)} right now.</p>
       <table class="fin cargo">
         <tr><th>Cargo</th><th>Rate</th><th>Waiting</th></tr>
         ${rows}
       </table>
+      <h4>Unserved demand <span class="legend">opportunity</span></h4>
+      <p class="hint">Places that want cargo but have no station in reach.</p>
+      ${unmetHtml}
+      <h4>Oversupplied cargo <span class="legend">backing up</span></h4>
+      <p class="hint">Produced faster than your trains haul it away.</p>
+      ${overHtml}
       <h4>Supply chains</h4>
       <p class="hint">coal + iron → <b>steel</b> → goods · logs → <b>lumber</b> · grain/livestock → <b>food</b> · coal/oil → power · ports import goods &amp; export raws.</p>
       <h4>Industries on the map</h4>

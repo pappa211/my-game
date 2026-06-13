@@ -1,3 +1,4 @@
+import { missingInputs } from '../game/Analysis';
 import { CARGO_BY_ID } from '../game/cargo';
 import { stationTier, trainType } from '../game/config';
 import { stationRadius } from '../game/Economy';
@@ -9,7 +10,7 @@ import {
   isTraversable,
   stationAt,
 } from '../game/GameState';
-import { industryDef } from '../game/industries';
+import { industryDef, industryInputs, industryOutputs, TOWN_DEMANDS } from '../game/industries';
 import { positionBehind } from '../game/Trains';
 import { GameState, Industry, Point, Terrain, Train } from '../game/types';
 import { UiState } from './uiState';
@@ -153,6 +154,7 @@ export class Renderer {
     this.drawTowns(state, x0, y0, x1, y1, sx, sy);
     this.drawIndustries(state, x0, y0, x1, y1, sx, sy);
     this.drawStations(state, ui, x0, y0, x1, y1, sx, sy);
+    this.drawChainLinks(state, ui, sx, sy);
     this.drawDraftMarkers(state, ui, sx, sy);
     this.drawTrains(state, ui, dt, sx, sy);
     this.drawSmoke(dt, sx, sy);
@@ -568,9 +570,15 @@ export class Renderer {
       ctx.fillText(def.icon, px + z * 0.49, py + z * 0.62);
       ctx.textBaseline = 'alphabetic';
     }
-    // activity lamp (green when producing)
+    // activity lamp (green when producing) / idle lamp (amber when a
+    // processor is starved of inputs) — makes stalled chains visible at a glance
     if (ind.activity > 0.05) {
       ctx.fillStyle = '#6fe06f';
+      ctx.beginPath();
+      ctx.arc(px + z * 0.2, py + z * 0.34, z * 0.06, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (def.recipe && missingInputs(ind, def).length > 0) {
+      ctx.fillStyle = '#f0b454';
       ctx.beginPath();
       ctx.arc(px + z * 0.2, py + z * 0.34, z * 0.06, 0, Math.PI * 2);
       ctx.fill();
@@ -603,6 +611,106 @@ export class Renderer {
     }
     ctx.restore();
     ctx.setLineDash([]);
+  }
+
+  // ----------------------------------------------------- supply-chain overlay
+
+  /**
+   * When an industry is selected, draw faint directional arrows to its valid
+   * upstream suppliers and downstream customers, coloured by the cargo that
+   * flows along each link — so a chain reads at a glance on the map.
+   */
+  private drawChainLinks(
+    state: GameState,
+    ui: UiState,
+    sx: (t: number) => number,
+    sy: (t: number) => number,
+  ): void {
+    if (ui.selected?.kind !== 'industry') return;
+    const selectedId = ui.selected.id;
+    const sel = state.industries.find((i) => i.id === selectedId);
+    if (!sel) return;
+    const { ctx } = this;
+    const z = this.camera.zoom;
+    const def = industryDef(sel.kind);
+    const inputs = industryInputs(def);
+    const outputs = industryOutputs(def);
+    const cx = sx(sel.x) + z / 2;
+    const cy = sy(sel.y) + z / 2;
+
+    const distTo = (p: { x: number; y: number }) => Math.hypot(p.x - sel.x, p.y - sel.y);
+    const nearest = <T extends { x: number; y: number }>(arr: T[], n: number): T[] =>
+      [...arr].sort((a, b) => distTo(a) - distTo(b)).slice(0, n);
+
+    const color = (kind: string | undefined) => CARGO_BY_ID[kind ?? '']?.color ?? '#c9d4e6';
+
+    // Arrow from A to B with the head at B, pulled back so it stays readable.
+    const arrow = (axc: number, ayc: number, bxc: number, byc: number, col: string) => {
+      const ang = Math.atan2(byc - ayc, bxc - axc);
+      const pad = z * 0.6;
+      const ax = axc + Math.cos(ang) * pad;
+      const ay = ayc + Math.sin(ang) * pad;
+      const bx = bxc - Math.cos(ang) * pad;
+      const by = byc - Math.sin(ang) * pad;
+      ctx.save();
+      ctx.strokeStyle = col + 'cc';
+      ctx.fillStyle = col + 'cc';
+      ctx.lineWidth = Math.max(1.5, z * 0.08);
+      ctx.setLineDash([z * 0.4, z * 0.28]);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const h = Math.max(6, z * 0.42);
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx - Math.cos(ang - 0.42) * h, by - Math.sin(ang - 0.42) * h);
+      ctx.lineTo(bx - Math.cos(ang + 0.42) * h, by - Math.sin(ang + 0.42) * h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    };
+
+    // Upstream: industries that produce one of this industry's inputs.
+    const upstream = nearest(
+      state.industries.filter(
+        (i) => i.id !== sel.id && industryOutputs(industryDef(i.kind)).some((o) => inputs.includes(o)),
+      ),
+      5,
+    );
+    for (const u of upstream) {
+      const shared = industryOutputs(industryDef(u.kind)).find((o) => inputs.includes(o));
+      arrow(sx(u.x) + z / 2, sy(u.y) + z / 2, cx, cy, color(shared));
+    }
+
+    // Downstream: industries and towns that consume one of this industry's outputs.
+    const downInd = nearest(
+      state.industries.filter(
+        (i) => i.id !== sel.id && industryInputs(industryDef(i.kind)).some((inp) => outputs.includes(inp)),
+      ),
+      5,
+    );
+    for (const d of downInd) {
+      const shared = outputs.find((o) => industryInputs(industryDef(d.kind)).includes(o));
+      arrow(cx, cy, sx(d.x) + z / 2, sy(d.y) + z / 2, color(shared));
+    }
+    if (outputs.some((o) => TOWN_DEMANDS.includes(o))) {
+      const shared = outputs.find((o) => TOWN_DEMANDS.includes(o));
+      for (const t of nearest(state.towns, 4)) {
+        arrow(cx, cy, sx(t.x) + z / 2, sy(t.y) + z / 2, color(shared));
+      }
+    }
+
+    // Highlight the selected industry and, if it's a stalled processor, say why.
+    ctx.strokeStyle = '#ffdc50';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(sx(sel.x) - 2, sy(sel.y) - 2, z + 4, z + 4);
+    const miss = def.recipe ? missingInputs(sel, def) : [];
+    if (miss.length > 0) {
+      const text = `⚠ needs ${miss.map((m) => CARGO_BY_ID[m]?.label ?? m).join(' & ').toLowerCase()}`;
+      this.label(text, cx, sy(sel.y) - 6, '#f0b454');
+    }
   }
 
   // --------------------------------------------------------------- stations

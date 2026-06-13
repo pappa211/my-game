@@ -1,5 +1,6 @@
+import { defaultTrainType } from '../game/config';
 import { buildStation, buildTrack, bulldoze, upgradeStation, addMessage } from '../game/GameState';
-import { GameState, Station, Train } from '../game/types';
+import { currentYear, GameState, Station, Train } from '../game/types';
 import { Renderer } from './Renderer';
 import { Tool, UiState } from './uiState';
 
@@ -199,13 +200,15 @@ export class InputController {
   }
 
   setTool(tool: Tool): void {
-    const { ui } = this.app;
+    const { ui, getState } = this.app;
     ui.tool = tool;
     ui.draft = null;
     if (tool === 'train') {
-      ui.draft = { mode: 'buy', typeId: 'local', trainId: null, stops: [] };
+      // Default to the cheapest era-appropriate engine, not a bogus id.
+      const typeId = defaultTrainType(currentYear(getState())).id;
+      ui.draft = { mode: 'buy', typeId, trainId: null, stops: [] };
     } else if (tool === 'route') {
-      ui.draft = { mode: 'reassign', typeId: 'local', trainId: null, stops: [] };
+      ui.draft = { mode: 'reassign', typeId: '', trainId: null, stops: [] };
     }
   }
 

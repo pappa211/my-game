@@ -26,6 +26,10 @@ export interface Town {
   population: number;
   /** 0..1 quality of rail service, smoothed; drives growth */
   serviceLevel: number;
+  /** demanded units delivered here in the current month (accumulator) */
+  deliveredThisMonth?: number;
+  /** completed-month delivered units, oldest first (capped at 12) */
+  deliveryHistory?: number[];
 }
 
 export type IndustryKind =
@@ -117,6 +121,10 @@ export interface Train {
   cargo: CargoBatch[];
   /** lifetime delivery revenue */
   earnings: number;
+  /** delivery revenue earned in the current month (accumulator) */
+  monthRevenue?: number;
+  /** completed-month delivery revenue, oldest first (capped at 12) */
+  revenueHistory?: number[];
   /** game day the engine was purchased (for age / obsolescence) */
   builtDay: number;
   x: number;
