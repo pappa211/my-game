@@ -91,6 +91,9 @@ map.
 
 **Save/Load:** the 💾/📂 buttons persist the full game state to localStorage, and
 the game **autosaves every two minutes** (startup resumes from the newest save).
+An update that changes the simulation bumps the save version, so older saves are
+invalidated and cleared on startup — you begin the new version with a clean game
+rather than resuming a stale mid-game from before the update.
 
 ## What is implemented
 
