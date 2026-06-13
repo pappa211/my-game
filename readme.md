@@ -41,7 +41,15 @@ A help overlay opens on first launch (press `H` to reopen it).
 4. **Buy a locomotive** (tool `4`). Only **era-appropriate** engines are for
    sale, and faster, stronger ones unlock as the years advance (you're notified
    when one arrives). Each engine has its own cost, capacity, speed, running
-   cost and **reliability** — unreliable engines break down and need repairs.
+   cost and **reliability** — unreliable engines break down and need repairs —
+   and a **gameplay role** (Express, Heavy freight, Workhorse, Branch-line…) so
+   it's clear which engine suits coal versus passengers.
+   - **Plan the route first.** As you click stops, a live preview estimates the
+     **round-trip distance, cargo flows and expected monthly profit**, shows
+     whether the route is limited by cargo or by train capacity, flags whether
+     it completes a supply chain, and warns about dead stops, idle mills or a
+     mis-sized engine. The Route tool (`5`) previews the same before you
+     reassign an existing train.
 5. **Move freight and passengers.** Revenue scales with quantity, haul distance
    and the **current economy**. Well-served towns grow; bigger towns generate
    more traffic.
@@ -71,10 +79,15 @@ steel mill only ships steel once you keep feeding it coal *and* iron.
 click the **minimap** to jump · tools on keys `1–7` · `Space` pauses · `F`
 follows the selected train · `Esc` cancels · `H` toggles help. Speed: 1×/2×/4×.
 
-**Side-panel tabs:** *Info* (contextual inspector), *Fleet* (train list with
-status/earnings — click to follow, or sell), *Cargo* (traffic report, cargo
-catalogue, supply-chain guide, industry census), *Finance* (cash, value,
-economy, 12-month chart, bonds) and *Rivals* (company rankings).
+**Side-panel tabs:** *Info* (contextual inspector — recommended cargo
+opportunities, idle-mill warnings, route previews, and a town detail panel with
+tier, growth, demands and a 12-month delivery chart), *Fleet* (**profit per
+train per month**, **profit per route**, and 12-month earnings — click to
+follow, or sell), *Cargo* (traffic report plus **unserved-demand** and
+**oversupplied-cargo** indicators, supply-chain guide, industry census),
+*Finance* (cash, value, economy, 12-month chart, bonds) and *Rivals* (company
+rankings). Select an industry to see arrows to its supply-chain partners on the
+map.
 
 **Save/Load:** the 💾/📂 buttons persist the full game state to localStorage, and
 the game **autosaves every two minutes** (startup resumes from the newest save).
@@ -86,8 +99,15 @@ the game **autosaves every two minutes** (startup resumes from the newest save).
   deterministic seeds, guaranteed early opportunities.
 - **Data-driven economy** — a cargo catalogue and industry-recipe catalogue
   drive production, multi-stage processing with industry stockpiles,
-  town demand and service-driven growth, and a live boom/bust **economy
-  multiplier** on revenue.
+  town demand and service-driven growth, **town tiers** (village → town → city
+  → metropolis) that scale traffic, and a live boom/bust **economy multiplier**
+  on revenue.
+- **Decision tools** — a pure, unit-tested analysis layer powers a route
+  planner (expected monthly revenue/cost/profit, per-cargo flows, the binding
+  constraint, supply-chain completion and warnings), recommended cargo
+  opportunities on stations and towns, idle-processor detection with on-map
+  supply-chain arrows, per-train/per-route profit, and network-wide
+  unserved-demand and oversupply indicators.
 - **Construction** — terrain-priced track, bridges over water, three station
   tiers with in-place upgrades, bulldozing, live placement/cost feedback.
 - **Trains & routing** — an **era-gated locomotive roster** (1830→1968) with
@@ -106,7 +126,9 @@ the game **autosaves every two minutes** (startup resumes from the newest save).
   towns, distinct sprites for all twelve industries with activity lamps, tiered
   station buildings, cargo-coloured multi-wagon trains with smoke, follow
   camera, and a minimap with industries, rival lines and a viewport rectangle.
-- **Reports** — tabbed dashboards for fleet, cargo/traffic, finance and rivals.
+- **Reports** — tabbed dashboards for fleet (with profit per train and per
+  route), cargo/traffic (with demand/oversupply signals), finance and rivals,
+  plus a contextual inspector with route previews and a town detail panel.
 - **Persistence** — versioned JSON serialization with manual + autosave slots
   and corrupt-save handling.
 
@@ -127,6 +149,7 @@ src/
     Pathfinding.ts      8-directional Dijkstra over track + station tiles
     Trains.ts           purchase (era-gated), movement, breakdowns, arrivals
     Economy.ts          production, processing chains, growth, revenue, costs
+    Analysis.ts         route profitability, opportunities, network signals
     Events.ts           economic cycle + monthly one-off events
     Rivals.ts           competing railroads, territory claims, rankings
     Simulation.ts       per-tick orchestration (time, economy, events, rivals)
@@ -137,7 +160,8 @@ src/
     uiState.ts          UI-only state (tool, tier, selection, tabs, drafts)
   persistence/
     SaveLoad.ts         serialize/deserialize + manual & autosave slots
-tests/                  pathfinding, economy, gameplay, mapgen, saveload (Vitest)
+tests/                  pathfinding, economy, gameplay, mapgen, saveload,
+                        analysis (Vitest)
 ```
 
 The simulation (`src/game/`) never touches the DOM, so the whole game logic is
@@ -152,8 +176,11 @@ unit-testable headlessly; the UI layer reads state and calls action functions.
 
 ## Suggested next improvements
 
-1. On-map rival track and trains competing for the same cargo.
-2. Scenario goals and victory conditions per era.
-3. Station ratings that throttle demand when service is poor.
-4. Stock market: buy/sell shares in your company and rivals.
-5. Sound effects and a periodic newspaper of company milestones.
+1. **Passenger/mail service classes** — demand that scales with town size,
+   distance, frequency and era; express-route designations and satisfaction.
+2. **Saved route templates** (e.g. "Coal → Steel Mill", "Passengers Express")
+   and a full standalone planning mode.
+3. On-map rival track and trains competing for the same cargo.
+4. Scenario goals and victory conditions per era.
+5. Stock market: buy/sell shares in your company and rivals.
+6. Sound effects and a periodic newspaper of company milestones.
