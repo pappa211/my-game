@@ -113,6 +113,8 @@ export class HUD {
   private els: Record<string, HTMLElement> = {};
   private lastPanelHtml = '';
   private lastMessagesHtml = '';
+  /** Memo for the route preview so Dijkstra doesn't re-run every frame. */
+  private routeMemo: { key: string; analysis: RouteAnalysis } | null = null;
 
   constructor(getState: () => GameState, ui: UiState, actions: HudActions) {
     this.getState = getState;
@@ -392,7 +394,16 @@ export class HUD {
     if (stops.length < 2) {
       return '<p class="hint">Pick at least two stops to preview distance, cargo and profit.</p>';
     }
-    const a: RouteAnalysis = analyzeRoute(state, stops, typeId);
+    // The network is static while a draft is open (the track/station tools
+    // clear the draft), so only re-run the analysis when an input changes.
+    const key = `${stops.join(',')}|${typeId}|${state.stations.length}|${Math.round(state.economy * 20)}`;
+    let a: RouteAnalysis;
+    if (this.routeMemo && this.routeMemo.key === key) {
+      a = this.routeMemo.analysis;
+    } else {
+      a = analyzeRoute(state, stops, typeId);
+      this.routeMemo = { key, analysis: a };
+    }
     if (!a.ok) {
       return `<div class="route-card bad"><b>⚠ ${escapeHtml(a.reason ?? 'Route not viable.')}</b></div>`;
     }

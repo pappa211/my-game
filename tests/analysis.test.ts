@@ -11,6 +11,7 @@ import {
   unservedDemand,
 } from '../src/game/Analysis';
 import { MAIL_RATE, PASSENGER_RATE, MONTH_DAYS, townTier, trainType } from '../src/game/config';
+import { buildStation, buildTrack, newGame } from '../src/game/GameState';
 import { industryDef } from '../src/game/industries';
 import { update } from '../src/game/Simulation';
 import { buyTrain } from '../src/game/Trains';
@@ -167,6 +168,53 @@ describe('processor input helpers', () => {
     expect(missingInputs(factory, def).length).toBe(2); // both missing → idle
     factory.stock.steel = 5;
     expect(missingInputs(factory, def)).toEqual([]); // one input suffices
+  });
+});
+
+describe('integration with a generated world', () => {
+  // Real maps include ports (produce AND consume), multi-input mills and
+  // disconnected stations — exercise the tools against that without throwing.
+  it('analyses opportunities and a built route on a procedural map', () => {
+    const state = newGame(7, 'steam');
+    expect(state.towns.length).toBeGreaterThan(0);
+
+    // No stations yet → every town's demand is unserved, nothing oversupplied.
+    expect(unservedDemand(state).length).toBeGreaterThan(0);
+    expect(oversupply(state)).toEqual([]);
+
+    // Build a short line between the two closest towns.
+    const a = state.towns[0];
+    const b = [...state.towns]
+      .slice(1)
+      .sort((p, q) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(q.x - a.x, q.y - a.y))[0];
+    const sa = buildStation(state, a.x + 1, a.y);
+    const sb = buildStation(state, b.x + 1, b.y);
+    expect(sa.ok && sb.ok).toBe(true);
+
+    // Opportunities at a town should be computable and finite.
+    const opps = shippingOpportunities(state, a.x, a.y, 3);
+    for (const o of opps) expect(Number.isFinite(o.rate)).toBe(true);
+
+    // Lay a straight-ish connecting track and analyse the route.
+    const stA = state.stations[0];
+    const stB = state.stations[1];
+    const x0 = Math.min(stA.x, stB.x);
+    const x1 = Math.max(stA.x, stB.x);
+    for (let x = x0; x <= x1; x++) buildTrack(state, x, stA.y);
+    for (let y = Math.min(stA.y, stB.y); y <= Math.max(stA.y, stB.y); y++) buildTrack(state, stB.x, y);
+
+    const r = analyzeRoute(state, [stA.id, stB.id], 'american');
+    // Whether or not the hand-laid track connects, the analysis must not throw
+    // and must return coherent, finite numbers.
+    expect(typeof r.ok).toBe('boolean');
+    expect(Number.isFinite(r.monthlyProfit)).toBe(true);
+    expect(Number.isFinite(r.monthlyRevenue)).toBe(true);
+    expect(r.monthlyRevenue).toBeGreaterThanOrEqual(0);
+
+    // Run a while; analysis should stay stable as the economy drifts.
+    for (let i = 0; i < 200; i++) update(state, 0.1);
+    const r2 = analyzeRoute(state, [stA.id, stB.id], 'american');
+    expect(Number.isFinite(r2.monthlyProfit)).toBe(true);
   });
 });
 
