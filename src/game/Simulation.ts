@@ -9,6 +9,28 @@ import { updateTrains } from './Trains';
 /** Completed months kept for the finance chart. */
 export const FINANCE_HISTORY_MONTHS = 12;
 
+/** Push a value into a rolling, oldest-first history capped at FINANCE_HISTORY_MONTHS. */
+function pushHistory(history: number[], value: number): void {
+  history.push(value);
+  if (history.length > FINANCE_HISTORY_MONTHS) {
+    history.splice(0, history.length - FINANCE_HISTORY_MONTHS);
+  }
+}
+
+/** At each month rollover, archive per-train revenue and per-town deliveries. */
+function rollMonthlyHistory(state: GameState): void {
+  for (const train of state.trains) {
+    if (!train.revenueHistory) train.revenueHistory = [];
+    pushHistory(train.revenueHistory, train.monthRevenue ?? 0);
+    train.monthRevenue = 0;
+  }
+  for (const town of state.towns) {
+    if (!town.deliveryHistory) town.deliveryHistory = [];
+    pushHistory(town.deliveryHistory, town.deliveredThisMonth ?? 0);
+    town.deliveredThisMonth = 0;
+  }
+}
+
 /** Advance the whole simulation by dtDays game days. */
 export function update(state: GameState, dtDays: number): void {
   if (dtDays <= 0) return;
@@ -30,6 +52,7 @@ export function update(state: GameState, dtDays: number): void {
     state.finances.lastMonth = state.finances.month;
     state.finances.month = { income: 0, expenses: 0 };
     state.finances.monthIndex = monthIndex;
+    rollMonthlyHistory(state);
     monthlyEvents(state);
   }
 
