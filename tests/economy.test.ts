@@ -25,6 +25,7 @@ function makeTrain(state: ReturnType<typeof blankState>, stops: number[]): Train
     state: 'loading',
     loadTimer: 0.4,
     cargo: [],
+    earnings: 0,
     x: 0,
     y: 0,
   };

@@ -25,21 +25,36 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: #1b212c;
+  background: linear-gradient(#222b39, #1a212c);
   border-bottom: 1px solid #2c3442;
   flex-wrap: wrap;
 }
 
+#topbar {
+  border-bottom: 2px solid #3b4659;
+}
+
 .brand {
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.3px;
   margin-right: 8px;
+  color: #f3c75c;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
 .stat {
-  background: #232b38;
-  padding: 3px 9px;
-  border-radius: 4px;
+  background: linear-gradient(#1c2330, #161c26);
+  border: 1px solid #2e3848;
+  padding: 3px 10px;
+  border-radius: 5px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat.big {
+  font-weight: 700;
+  color: #ffe9a8;
+  border-color: #4a4630;
 }
 
 .stat.negative {
@@ -51,32 +66,61 @@ body {
 }
 
 button {
-  background: #2a3342;
+  background: linear-gradient(#39455a, #2a3342);
   color: #e8e6e0;
-  border: 1px solid #3a4658;
-  border-radius: 4px;
-  padding: 4px 10px;
+  border: 1px solid #4a5871;
+  border-bottom-color: #222a38;
+  border-radius: 5px;
+  padding: 4px 11px;
   cursor: pointer;
   font-size: 13px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 button:hover {
-  background: #354159;
+  background: linear-gradient(#42506a, #33405a);
+}
+
+button:active {
+  transform: translateY(1px);
+  box-shadow: none;
 }
 
 button.active {
-  background: #3d6fd0;
-  border-color: #6b9aef;
+  background: linear-gradient(#4a7be0, #3460bd);
+  border-color: #7ba4f2;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 button:disabled {
   opacity: 0.45;
   cursor: default;
+  transform: none;
+}
+
+button.primary {
+  background: linear-gradient(#3fae6a, #2e8a51);
+  border-color: #62c98a;
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(#49bd76, #35995c);
+}
+
+button.danger {
+  background: linear-gradient(#b04a3e, #8e382e);
+  border-color: #d07064;
+}
+
+button.danger:hover {
+  background: linear-gradient(#c05548, #a04338);
 }
 
 kbd {
   background: #1a202b;
   border: 1px solid #3a4658;
+  border-bottom-width: 2px;
   border-radius: 3px;
   padding: 0 4px;
   font-size: 11px;
@@ -94,16 +138,36 @@ kbd {
 }
 
 #sidepanel {
-  width: 290px;
+  width: 300px;
   flex-shrink: 0;
-  background: #1b212c;
-  border-left: 1px solid #2c3442;
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #1d2430, #1a212c);
+  border-left: 2px solid #2c3442;
+  padding: 8px 10px 10px;
   overflow-y: auto;
+}
+
+#paneltabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+#paneltabs button {
+  flex: 1;
+  padding: 5px 0;
+  border-radius: 5px 5px 0 0;
 }
 
 #sidepanel h3 {
   margin: 4px 0 8px;
+  color: #ffe9a8;
+}
+
+#sidepanel h4 {
+  margin: 12px 0 6px;
+  color: #c9d4e6;
 }
 
 #sidepanel p {
@@ -129,6 +193,130 @@ kbd {
 
 #panel-context button.type small {
   color: #aeb9cc;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  margin-right: 6px;
+  vertical-align: baseline;
+}
+
+/* train list rows */
+button.trainrow {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+
+.trainrow-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trainrow-status {
+  width: 18px;
+  text-align: center;
+}
+
+.trainrow-earn {
+  color: #9fdcab;
+  font-variant-numeric: tabular-nums;
+}
+
+button.trainrow.stranded .trainrow-status {
+  color: #ffb74d;
+}
+
+/* finance table + chart */
+table.fin {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+table.fin td {
+  padding: 3px 0;
+  border-bottom: 1px solid #232b38;
+}
+
+table.fin td:last-child {
+  text-align: right;
+}
+
+table.fin td.pos {
+  color: #9fdcab;
+}
+
+table.fin td.neg {
+  color: #ff7a6e;
+}
+
+.chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 90px;
+  padding: 4px;
+  background: #141a23;
+  border: 1px solid #2c3442;
+  border-radius: 5px;
+}
+
+.chart-month {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 100%;
+}
+
+.chart-month.current {
+  outline: 1px dashed #4a5871;
+  outline-offset: 1px;
+}
+
+.chart .bar {
+  flex: 1;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+}
+
+.chart .bar.income {
+  background: #3fae6a;
+}
+
+.chart .bar.expense {
+  background: #c05548;
+}
+
+.legend {
+  font-size: 11px;
+  font-weight: 400;
+  color: #93a0b4;
+  margin-left: 6px;
+}
+
+.legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin: 0 3px 0 8px;
+}
+
+.legend i.inc {
+  background: #3fae6a;
+}
+
+.legend i.exp {
+  background: #c05548;
 }
 
 ol.stops {
@@ -171,12 +359,19 @@ ol.stops {
 }
 
 .help-card {
-  max-width: 620px;
-  background: #1d2430;
-  border: 1px solid #3a4658;
-  border-radius: 8px;
+  max-width: 640px;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: linear-gradient(#222b3a, #1d2430);
+  border: 1px solid #4a5871;
+  border-radius: 10px;
   padding: 18px 26px;
   line-height: 1.5;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+.help-card h2 {
+  color: #f3c75c;
 }
 
 .help-card .hint {

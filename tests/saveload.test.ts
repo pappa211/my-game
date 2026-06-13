@@ -73,7 +73,7 @@ describe('Save/Load', () => {
   });
 
   it('rejects corrupt save data gracefully', () => {
-    store.set('rail-frontier-save-v1', '{"version":99}');
+    store.set('rail-frontier-save-v2', '{"version":99}');
     expect(loadFromLocalStorage()).toBeNull();
   });
 });

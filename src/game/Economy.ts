@@ -2,13 +2,17 @@ import {
   CARGO_LABELS,
   CARGO_RATES,
   COAL_RATE,
+  GROWTH_PER_PASSENGER,
   PASSENGER_RATE,
   STATION_CARGO_CAP,
   STATION_RADIUS,
+  TOWN_MAX_POP,
   trainType,
+  WOOD_RATE,
+  WOOD_TO_GOODS,
 } from './config';
 import { addMessage, earn, getStation, spend } from './GameState';
-import { CargoKind, GameState, Industry, Station, Town, Train } from './types';
+import { CARGO_KINDS, CargoKind, GameState, Industry, Station, Town, Train } from './types';
 
 function within(ax: number, ay: number, bx: number, by: number, radius: number): boolean {
   return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) <= radius;
@@ -28,28 +32,38 @@ export function industriesServed(state: GameState, station: Station): Industry[]
 
 /** Whether delivering this cargo kind at this station earns revenue. */
 export function stationAccepts(state: GameState, station: Station, kind: CargoKind): boolean {
-  if (kind === 'passengers') return townsServed(state, station).length > 0;
-  return industriesServed(state, station).some((i) => i.kind === 'powerPlant');
+  switch (kind) {
+    case 'passengers':
+    case 'goods':
+      return townsServed(state, station).length > 0;
+    case 'coal':
+      return industriesServed(state, station).some((i) => i.kind === 'powerPlant');
+    case 'wood':
+      return industriesServed(state, station).some((i) => i.kind === 'sawmill');
+  }
 }
 
-/** Towns emit passengers and coal mines emit coal into covering stations. */
+function addWaiting(station: Station, kind: CargoKind, qty: number): void {
+  station.waiting[kind] = Math.min(STATION_CARGO_CAP, station.waiting[kind] + qty);
+}
+
+/** Towns emit passengers; mines emit coal; lumber camps emit wood. */
 export function generateDemand(state: GameState, dtDays: number): void {
   for (const town of state.towns) {
     const covering = stationsCovering(state, town.x, town.y);
     if (covering.length === 0) continue;
     const produced = (town.population * PASSENGER_RATE * dtDays) / covering.length;
-    for (const s of covering) {
-      s.waiting.passengers = Math.min(STATION_CARGO_CAP, s.waiting.passengers + produced);
-    }
+    for (const s of covering) addWaiting(s, 'passengers', produced);
   }
   for (const ind of state.industries) {
-    if (ind.kind !== 'coalMine') continue;
+    const kind: CargoKind | null =
+      ind.kind === 'coalMine' ? 'coal' : ind.kind === 'lumberCamp' ? 'wood' : null;
+    if (!kind) continue;
+    const rate = kind === 'coal' ? COAL_RATE : WOOD_RATE;
     const covering = stationsCovering(state, ind.x, ind.y);
     if (covering.length === 0) continue;
-    const produced = (COAL_RATE * dtDays) / covering.length;
-    for (const s of covering) {
-      s.waiting.coal = Math.min(STATION_CARGO_CAP, s.waiting.coal + produced);
-    }
+    const produced = (rate * dtDays) / covering.length;
+    for (const s of covering) addWaiting(s, kind, produced);
   }
 }
 
@@ -68,7 +82,9 @@ export function cargoCount(train: Train): number {
 
 /**
  * Unload every batch this station accepts (except batches loaded here) and
- * pay revenue based on quantity and origin distance. Returns total revenue.
+ * pay revenue based on quantity and origin distance. Side effects of the
+ * cargo chains: delivered wood becomes goods at the sawmill's station, and
+ * delivered passengers grow the towns the station serves.
  */
 export function unloadAtStation(state: GameState, train: Train, station: Station): number {
   let revenue = 0;
@@ -86,12 +102,24 @@ export function unloadAtStation(state: GameState, train: Train, station: Station
         state,
         `${train.name} delivered ${batch.qty} ${CARGO_LABELS[batch.kind]} to ${station.name} (+$${pay})`,
       );
+      if (batch.kind === 'wood') {
+        addWaiting(station, 'goods', batch.qty * WOOD_TO_GOODS);
+      } else if (batch.kind === 'passengers') {
+        const towns = townsServed(state, station);
+        const growth = (batch.qty * GROWTH_PER_PASSENGER) / Math.max(1, towns.length);
+        for (const t of towns) {
+          t.population = Math.min(TOWN_MAX_POP, t.population + growth);
+        }
+      }
     } else {
       kept.push(batch);
     }
   }
   train.cargo = kept;
-  if (revenue > 0) earn(state, revenue);
+  if (revenue > 0) {
+    earn(state, revenue);
+    train.earnings += revenue;
+  }
   return revenue;
 }
 
@@ -99,8 +127,7 @@ export function unloadAtStation(state: GameState, train: Train, station: Station
 export function loadAtStation(state: GameState, train: Train, station: Station): void {
   const type = trainType(train.typeId);
   let space = type.capacity - cargoCount(train);
-  const kinds: CargoKind[] = ['passengers', 'coal'];
-  for (const kind of kinds) {
+  for (const kind of CARGO_KINDS) {
     if (space <= 0) break;
     const deliverable = train.stops.some((id) => {
       if (id === station.id) return false;
@@ -118,7 +145,7 @@ export function loadAtStation(state: GameState, train: Train, station: Station):
   }
 }
 
-/** Rough company valuation: cash plus asset book value. */
+/** Rough company valuation: cash plus asset book value, minus the loan. */
 export function companyValue(state: GameState): number {
   const trackTiles = state.track.reduce((a, b) => a + b, 0);
   const trainValue = state.trains.reduce(
@@ -126,6 +153,6 @@ export function companyValue(state: GameState): number {
     0,
   );
   return Math.floor(
-    state.cash + trackTiles * 15 + state.stations.length * 400 + trainValue,
+    state.cash + trackTiles * 15 + state.stations.length * 400 + trainValue - state.loan,
   );
 }

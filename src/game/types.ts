@@ -22,10 +22,11 @@ export interface Town {
   x: number;
   y: number;
   name: string;
+  /** fractional — grows with passenger service; floor for display */
   population: number;
 }
 
-export type IndustryKind = 'coalMine' | 'powerPlant';
+export type IndustryKind = 'coalMine' | 'powerPlant' | 'lumberCamp' | 'sawmill';
 
 export interface Industry {
   id: number;
@@ -35,7 +36,9 @@ export interface Industry {
   name: string;
 }
 
-export type CargoKind = 'passengers' | 'coal';
+export type CargoKind = 'passengers' | 'coal' | 'wood' | 'goods';
+
+export const CARGO_KINDS: CargoKind[] = ['passengers', 'coal', 'wood', 'goods'];
 
 export interface Station {
   id: number;
@@ -44,6 +47,10 @@ export interface Station {
   name: string;
   /** goods waiting to be picked up (fractional accumulation, floored on load) */
   waiting: Record<CargoKind, number>;
+}
+
+export function emptyWaiting(): Record<CargoKind, number> {
+  return { passengers: 0, coal: 0, wood: 0, goods: 0 };
 }
 
 export interface TrainTypeDef {
@@ -56,6 +63,8 @@ export interface TrainTypeDef {
   /** money per game day */
   runningCost: number;
   color: string;
+  /** wagons drawn behind the engine */
+  wagons: number;
 }
 
 export interface CargoBatch {
@@ -77,7 +86,7 @@ export interface Train {
   atStationId: number;
   /** station the current path leads to, null while parked */
   targetStationId: number | null;
-  /** current leg as a list of tile coordinates */
+  /** current leg as a list of tile coordinates (may include diagonal steps) */
   path: Point[];
   /** fractional index into path */
   pathPos: number;
@@ -85,6 +94,8 @@ export interface Train {
   /** days remaining for loading / stranded-retry */
   loadTimer: number;
   cargo: CargoBatch[];
+  /** lifetime delivery revenue */
+  earnings: number;
   x: number;
   y: number;
 }
@@ -99,6 +110,8 @@ export interface Finances {
   lastMonth: FinancePeriod;
   total: FinancePeriod;
   monthIndex: number;
+  /** completed months, oldest first (capped) */
+  history: FinancePeriod[];
 }
 
 export interface Message {
@@ -109,13 +122,15 @@ export interface Message {
 export interface GameState {
   seed: number;
   map: GameMap;
-  /** flat 0/1 array parallel to map.terrain */
+  /** flat 0/1 array parallel to map.terrain (track over water = bridge) */
   track: number[];
   towns: Town[];
   industries: Industry[];
   stations: Station[];
   trains: Train[];
   cash: number;
+  /** outstanding loan principal */
+  loan: number;
   /** total game days elapsed (float) */
   day: number;
   finances: Finances;

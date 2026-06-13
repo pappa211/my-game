@@ -1,5 +1,12 @@
 import { createState, tileIndex } from '../src/game/GameState';
-import { GameMap, GameState, Industry, Terrain, Town } from '../src/game/types';
+import {
+  emptyWaiting,
+  GameMap,
+  GameState,
+  Industry,
+  Terrain,
+  Town,
+} from '../src/game/types';
 
 /** A flat all-grass world for deterministic unit tests. */
 export function blankState(
@@ -29,7 +36,7 @@ export function addStation(state: GameState, x: number, y: number, name: string)
     x,
     y,
     name,
-    waiting: { passengers: 0, coal: 0 },
+    waiting: emptyWaiting(),
   };
   state.stations.push(station);
   return station;
