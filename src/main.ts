@@ -12,6 +12,7 @@ import { assignRoute, buyTrain, sellTrain } from './game/Trains';
 import { hashSeed } from './game/rng';
 import {
   autosaveToLocalStorage,
+  clearLegacySaves,
   loadFromLocalStorage,
   loadNewestFromLocalStorage,
   saveToLocalStorage,
@@ -26,6 +27,8 @@ const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
 const ui = createUiState();
 
+// Drop saves from before this update so the game never resumes a stale mid-game.
+clearLegacySaves();
 let state: GameState = loadNewestFromLocalStorage() ?? newGame(Date.now() >>> 0);
 const getState = () => state;
 

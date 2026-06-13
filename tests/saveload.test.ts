@@ -3,6 +3,7 @@ import { buildStation, buildTrack, newGame } from '../src/game/GameState';
 import { update } from '../src/game/Simulation';
 import { buyTrain } from '../src/game/Trains';
 import {
+  clearLegacySaves,
   clearSave,
   deserialize,
   loadFromLocalStorage,
@@ -73,7 +74,25 @@ describe('Save/Load', () => {
   });
 
   it('rejects corrupt save data gracefully', () => {
-    store.set('rail-frontier-save-v3', '{"version":99}');
+    store.set('rail-frontier-save-v4', '{"version":99}');
     expect(loadFromLocalStorage()).toBeNull();
+  });
+
+  it('clears saves from older builds so a pre-update game never resumes', () => {
+    // Slots written by earlier versions — these would otherwise linger forever.
+    store.set('rail-frontier-save-v1', 'old');
+    store.set('rail-frontier-save-v2', 'old');
+    store.set('rail-frontier-autosave-v3', 'stale mid-game from before the update');
+
+    clearLegacySaves();
+
+    expect(store.has('rail-frontier-save-v1')).toBe(false);
+    expect(store.has('rail-frontier-save-v2')).toBe(false);
+    expect(store.has('rail-frontier-autosave-v3')).toBe(false);
+
+    // The current-version save is left untouched.
+    saveToLocalStorage(newGame(3));
+    clearLegacySaves();
+    expect(loadFromLocalStorage()).not.toBeNull();
   });
 });

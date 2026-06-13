@@ -1,8 +1,15 @@
 import { GameState } from '../game/types';
 
-const SAVE_KEY = 'rail-frontier-save-v3';
-const AUTOSAVE_KEY = 'rail-frontier-autosave-v3';
-const SAVE_VERSION = 3;
+/**
+ * Bump this whenever an update changes the simulation enough that an
+ * in-progress game from before the update should not resume. The storage keys
+ * derive from it, so a bump both stops the old save from loading and re-slots
+ * new saves — a player starts the new version clean instead of mid-game.
+ * `clearLegacySaves()` then deletes the stale slots so nothing carries forward.
+ */
+const SAVE_VERSION = 4;
+const SAVE_KEY = `rail-frontier-save-v${SAVE_VERSION}`;
+const AUTOSAVE_KEY = `rail-frontier-autosave-v${SAVE_VERSION}`;
 
 interface SaveFile {
   version: number;
@@ -68,4 +75,16 @@ export function hasSave(): boolean {
 export function clearSave(): void {
   localStorage.removeItem(SAVE_KEY);
   localStorage.removeItem(AUTOSAVE_KEY);
+}
+
+/**
+ * Remove save/autosave slots written by older builds. Called on startup so a
+ * game from before the latest update is never resumed and never lingers in the
+ * browser — the player always starts the current version clean.
+ */
+export function clearLegacySaves(): void {
+  for (let v = 1; v < SAVE_VERSION; v++) {
+    localStorage.removeItem(`rail-frontier-save-v${v}`);
+    localStorage.removeItem(`rail-frontier-autosave-v${v}`);
+  }
 }
